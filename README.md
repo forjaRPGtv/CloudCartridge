@@ -36,7 +36,7 @@
 ### Passo 1: Baixar o Repositório
 Baixe o arquivo ZIP deste repositório ou clone usando o Git:
 ```bash
-git clone https://github.com/SEU_USUARIO/CloudCartridge.git
+git clone https://github.com/forjaRPGtv/CloudCartridge.git
 ```
 
 ### Passo 2: Executar o Assistente de Configuração
