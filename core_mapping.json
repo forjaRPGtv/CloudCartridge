@@ -1,0 +1,186 @@
+﻿{
+    "Mattel - Intellivision":  {
+                                   "CoreName":  "Mattel - Intellivision (FreeIntv)",
+                                   "CorePath":  "C:\\RetroArch-Win64\\cores\\freeintv_libretro.dll"
+                               },
+    "Atari - 2600":  {
+                         "CoreName":  "Atari - 2600 (Stella)",
+                         "CorePath":  "C:\\RetroArch-Win64\\cores\\stella_libretro.dll"
+                     },
+    "SNK - Neo Geo":  {
+                          "CoreName":  "Arcade (MAME 2010)",
+                          "CorePath":  "C:\\RetroArch-Win64\\cores\\geolith_libretro.dll"
+                      },
+    "SNK - Neo Geo Pocket Color":  {
+                                       "CoreName":  "Beetle NeoPop",
+                                       "CorePath":  "C:\\RetroArch-Win64\\cores\\mednafen_ngp_libretro.dll"
+                                   },
+    "Nintendo - Game Boy Advance":  {
+                                        "CoreName":  "Nintendo - Game Boy Advance (mGBA)",
+                                        "CorePath":  "C:\\RetroArch-Win64\\cores\\mgba_libretro.dll"
+                                    },
+    "Magnavox - Odyssey2":  {
+                                "CoreName":  "Magnavox - Odyssey2 / Philips Videopac+ (O2EM)",
+                                "CorePath":  "C:\\RetroArch-Win64\\cores\\o2em_libretro.dll"
+                            },
+    "Sega - Dreamcast":  {
+                             "CoreName":  "Sega - Dreamcast/Naomi (Flycast)",
+                             "CorePath":  "C:\\RetroArch-Win64\\cores\\flycast_libretro.dll"
+                         },
+    "Bandai - WonderSwan":  {
+                                "CoreName":  "Beetle WonderSwan",
+                                "CorePath":  "C:\\RetroArch-Win64\\cores\\mednafen_wswan_libretro.dll"
+                            },
+    "SNK - Neo Geo Pocket":  {
+                                 "CoreName":  "Beetle NeoPop",
+                                 "CorePath":  "C:\\RetroArch-Win64\\cores\\mednafen_ngp_libretro.dll"
+                             },
+    "RCA - Studio II":  {
+                            "CoreName":  "Arcade (MAME 2010)",
+                            "CorePath":  "C:\\RetroArch-Win64\\cores\\mame2010_libretro.dll"
+                        },
+    "GCE - Vectrex":  {
+                          "CoreName":  "GCE - Vectrex (vecx)",
+                          "CorePath":  "C:\\RetroArch-Win64\\cores\\vecx_libretro.dll"
+                      },
+    "Sega - 32X":  {
+                       "CoreName":  "Sega - MS/MD/CD/32X (PicoDrive)",
+                       "CorePath":  "C:\\RetroArch-Win64\\cores\\picodrive_libretro.dll"
+                   },
+    "NEC - PC Engine SuperGrafx":  {
+                                       "CoreName":  "Beetle PCE Fast",
+                                       "CorePath":  "C:\\RetroArch-Win64\\cores\\mednafen_pce_fast_libretro.dll"
+                                   },
+    "Nintendo - Nintendo Entertainment System":  {
+                                                     "CoreName":  "Nintendo - NES / Famicom (Mesen)",
+                                                     "CorePath":  "C:\\RetroArch-Win64\\cores\\mesen_libretro.dll"
+                                                 },
+    "Sega - Master System - Mark III":  {
+                                            "CoreName":  "Sega - MS/GG/SG-1000 (Gearsystem)",
+                                            "CorePath":  "C:\\RetroArch-Win64\\cores\\gearsystem_libretro.dll"
+                                        },
+    "Sega - Saturn":  {
+                          "CoreName":  "Sega - Saturn (Beetle Saturn)",
+                          "CorePath":  "C:\\RetroArch-Win64\\cores\\mednafen_saturn_libretro.dll"
+                      },
+    "Nintendo - Wii":  {
+                           "CoreName":  "Nintendo - GameCube / Wii (Dolphin)",
+                           "CorePath":  "C:\\RetroArch-Win64\\cores\\dolphin_libretro.dll"
+                       },
+    "Atari - Jaguar":  {
+                           "CoreName":  "Atari - Jaguar (Virtual Jaguar)",
+                           "CorePath":  "C:\\RetroArch-Win64\\cores\\virtualjaguar_libretro.dll"
+                       },
+    "Atari - 5200":  {
+                         "CoreName":  "Atari - 400/800/600XL/800XL/130XE/5200 (Atari800)",
+                         "CorePath":  "C:\\RetroArch-Win64\\cores\\atari800_libretro.dll"
+                     },
+    "Sega - Mega Drive - Genesis":  {
+                                        "CoreName":  "Sega - MS/GG/MD/CD (Genesis Plus GX)",
+                                        "CorePath":  "C:\\RetroArch-Win64\\cores\\genesis_plus_gx_libretro.dll"
+                                    },
+    "SNK - Neo Geo CD":  {
+                             "CoreName":  "SNK - Neo Geo CD (NeoCD)",
+                             "CorePath":  "C:\\RetroArch-Win64\\cores\\neocd_libretro.dll"
+                         },
+    "Nintendo - Nintendo 64":  {
+                                   "CoreName":  "Nintendo - Nintendo 64 (Mupen64Plus-Next)",
+                                   "CorePath":  "C:\\RetroArch-Win64\\cores\\mupen64plus_next_libretro.dll"
+                               },
+    "Nintendo - Super Nintendo Entertainment System":  {
+                                                           "CoreName":  "Nintendo - SNES / SFC (Snes9x)",
+                                                           "CorePath":  "C:\\RetroArch-Win64\\cores\\snes9x_libretro.dll"
+                                                       },
+    "Nintendo - Nintendo 64DD":  {
+                                     "CoreName":  "Mupen64Plus-Next",
+                                     "CorePath":  "C:\\RetroArch-Win64\\cores\\mupen64plus_next_libretro.dll"
+                                 },
+    "NEC - PC Engine - TurboGrafx 16":  {
+                                            "CoreName":  "NEC - PC Engine / CD (Beetle PCE FAST)",
+                                            "CorePath":  "C:\\RetroArch-Win64\\cores\\mednafen_pce_fast_libretro.dll"
+                                        },
+    "Atari - Lynx":  {
+                         "CoreName":  "Atari - Lynx (Handy)",
+                         "CorePath":  "C:\\RetroArch-Win64\\cores\\handy_libretro.dll"
+                     },
+    "Fairchild - Channel F":  {
+                                  "CoreName":  "Fairchild - Channel F (FreeChaF)",
+                                  "CorePath":  "C:\\RetroArch-Win64\\cores\\freechaf_libretro.dll"
+                              },
+    "Sony - PlayStation":  {
+                               "CoreName":  "Sony - PlayStation (SwanStation)",
+                               "CorePath":  "C:\\RetroArch-Win64\\cores\\swanstation_libretro.dll"
+                           },
+    "Nintendo - Game Boy":  {
+                                "CoreName":  "Nintendo - Game Boy / Color (Gambatte)",
+                                "CorePath":  "C:\\RetroArch-Win64\\cores\\gambatte_libretro.dll"
+                            },
+    "Nintendo - Virtual Boy":  {
+                                   "CoreName":  "Nintendo - Virtual Boy (Beetle VB)",
+                                   "CorePath":  "C:\\RetroArch-Win64\\cores\\mednafen_vb_libretro.dll"
+                               },
+    "Watara - Supervision":  {
+                                 "CoreName":  "Potator",
+                                 "CorePath":  "C:\\RetroArch-Win64\\cores\\potator_libretro.dll"
+                             },
+    "Bandai - WonderSwan Color":  {
+                                      "CoreName":  "Beetle WonderSwan",
+                                      "CorePath":  "C:\\RetroArch-Win64\\cores\\mednafen_wswan_libretro.dll"
+                                  },
+    "Nintendo - GameCube":  {
+                                "CoreName":  "Nintendo - GameCube / Wii (Dolphin)",
+                                "CorePath":  "C:\\RetroArch-Win64\\cores\\dolphin_libretro.dll"
+                            },
+    "Coleco - ColecoVision":  {
+                                  "CoreName":  "MSX/SVI/ColecoVision/SG-1000 (blueMSX)",
+                                  "CorePath":  "C:\\RetroArch-Win64\\cores\\bluemsx_libretro.dll"
+                              },
+    "MAME 2010":  {
+                      "CoreName":  "Arcade (MAME 2010)",
+                      "CorePath":  "C:\\RetroArch-Win64\\cores\\mame2010_libretro.dll"
+                  },
+    "Nintendo - Game Boy Color":  {
+                                      "CoreName":  "Nintendo - Game Boy / Color (Gambatte)",
+                                      "CorePath":  "C:\\RetroArch-Win64\\cores\\gambatte_libretro.dll"
+                                  },
+    "Nintendo - Family Computer Disk System":  {
+                                                   "CoreName":  "Nintendo - NES / Famicom (Mesen)",
+                                                   "CorePath":  "C:\\RetroArch-Win64\\cores\\mesen_libretro.dll"
+                                               },
+    "Sega - Game Gear":  {
+                             "CoreName":  "Sega - MS/GG/SG-1000 (Gearsystem)",
+                             "CorePath":  "C:\\RetroArch-Win64\\cores\\gearsystem_libretro.dll"
+                         },
+    "Atari - 7800":  {
+                         "CoreName":  "Atari - 7800 (ProSystem)",
+                         "CorePath":  "C:\\RetroArch-Win64\\cores\\prosystem_libretro.dll"
+                     },
+    "Nintendo - Wii U":  {
+                             "CoreName":  "DETECT",
+                             "CorePath":  "DETECT"
+                         },
+    "Nintendo - Pokemon Mini":  {
+                                    "CoreName":  "PokeMini",
+                                    "CorePath":  "C:\\RetroArch-Win64\\cores\\pokemini_libretro.dll"
+                                },
+    "Sega - SG-1000":  {
+                           "CoreName":  "Sega - MS/GG/SG-1000 (Gearsystem)",
+                           "CorePath":  "C:\\RetroArch-Win64\\cores\\gearsystem_libretro.dll"
+                       },
+    "Emerson - Arcadia 2001":  {
+                                   "CoreName":  "Arcade (MAME 2010)",
+                                   "CorePath":  "C:\\RetroArch-Win64\\cores\\mame2010_libretro.dll"
+                               },
+    "Sony - PlayStation 2":  {
+                                 "CoreName":  "Sony - PlayStation 2 (LRPS2)",
+                                 "CorePath":  "C:\\RetroArch-Win64\\cores\\pcsx2_libretro.dll"
+                             },
+    "Nintendo - Nintendo DS":  {
+                                   "CoreName":  "Nintendo - DS (melonDS DS)",
+                                   "CorePath":  "C:\\RetroArch-Win64\\cores\\melondsds_libretro.dll"
+                               },
+    "MAME":  {
+                 "CoreName":  "Arcade (MAME 2003-Plus)",
+                 "CorePath":  "C:\\RetroArch-Win64\\cores\\mame2003_plus_libretro.dll"
+             }
+}

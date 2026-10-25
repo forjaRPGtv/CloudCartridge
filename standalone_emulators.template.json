@@ -1,0 +1,32 @@
+{
+    "Sony - PlayStation 2": {
+        "EmulatorName": "PCSX2",
+        "Executable": "C:\\Emuladores\\PS2\\pcsx2-qt.exe",
+        "Arguments": "-batch -nogui \"{ROM}\""
+    },
+    "Nintendo - GameCube": {
+        "EmulatorName": "Dolphin",
+        "Executable": "C:\\Emuladores\\GC+Wii\\Dolphin.exe",
+        "Arguments": "-b -e \"{ROM}\""
+    },
+    "Nintendo - Wii": {
+        "EmulatorName": "Dolphin",
+        "Executable": "C:\\Emuladores\\GC+Wii\\Dolphin.exe",
+        "Arguments": "-b -e \"{ROM}\""
+    },
+    "Nintendo - Wii U": {
+        "EmulatorName": "Cemu",
+        "Executable": "C:\\Emuladores\\WiiU\\Cemu.exe",
+        "Arguments": "-f -g \"{ROM}\""
+    },
+    "Sony - PlayStation 3": {
+        "EmulatorName": "RPCS3",
+        "Executable": "C:\\Emuladores\\PS3\\rpcs3.exe",
+        "Arguments": "\"{ROM}\""
+    },
+    "Nintendo - 3DS": {
+        "EmulatorName": "Citra",
+        "Executable": "C:\\Emuladores\\3DS\\citra-qt.exe",
+        "Arguments": "\"{ROM}\""
+    }
+}

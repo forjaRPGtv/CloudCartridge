@@ -1,0 +1,14 @@
+# Arquivos de configuracao e cache local (dados pessoais do usuario)
+config.json
+standalone_emulators.json
+.cache_registry.json
+
+# Logs e arquivos temporarios
+*.log
+*.tmp
+*.bak
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/

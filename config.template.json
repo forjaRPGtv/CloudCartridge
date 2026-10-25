@@ -1,0 +1,9 @@
+{
+    "google_drive_roms_path": "G:\\Meu Drive\\_ISOS_ROMS_",
+    "local_roms_path": "Z:\\_ISOS_ROMS_",
+    "retroarch_path": "C:\\RetroArch-Win64\\retroarch.exe",
+    "retention_days": 3,
+    "enable_cloud_save_sync": true,
+    "enable_multi_disc_prefetch": true,
+    "enable_telemetry_hud": true
+}
