@@ -1,6 +1,6 @@
 # ==============================================================================
-# CloudROM Watcher - Open-Source Edition
-# Guardião de Telemetria em Background para Emuladores
+# CloudROM Watcher - Guardião de Telemetria Universal para RetroArch & Standalone
+# Monitora content_history.lpl e processos de emuladores para disparar a Telemetria
 # Arthur Reis Projetos
 # ==============================================================================
 
@@ -12,44 +12,32 @@ param (
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-$scriptDir = $PSScriptRoot
-$configFile = Join-Path $scriptDir "config.json"
-$config = $null
-if (Test-Path -LiteralPath $configFile) {
-    try { $config = Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
-}
+$baseDir = 'Z:\_ISOS_ROMS_'
+$telemetryScript = 'z:\_Arthur_Projetos\RetroArch-Tools\CloudROM_Telemetry.ps1'
+$historyFile = 'C:\RetroArch-Win64\playlists\builtin\content_history.lpl'
+$historyDir = Split-Path $historyFile -Parent
 
-$baseDir = if ($config -and $config.local_roms_path) { $config.local_roms_path } else { 'Z:\_ISOS_ROMS_' }
-$registryFile = Join-Path $baseDir '.cache_registry.json'
-$telemetryScript = Join-Path $scriptDir "CloudROM_Telemetry.ps1"
-
+# Extensões suportadas de jogos
 $validExtensions = @(
     '.7z', '.zip', '.chd', '.iso', '.cso', '.bin', '.cue', 
     '.pbp', '.wbfs', '.rvz', '.nes', '.sfc', '.smc', '.gba', 
     '.gb', '.gbc', '.n64', '.z64', '.v64', '.nds'
 )
 
-$activeDownloads = [System.Collections.Concurrent.ConcurrentDictionary[string, DateTime]]::new()
+# Emuladores Standalone suportados
+$standaloneProcs = @(
+    'pcsx2-qt', 'Dolphin', 'Cemu', 'rpcs3', 'citra-qt', 'duckstation-qt-x64-ReleaseLTCG'
+)
 
-function Is-GameInCache ([string]$fullPath) {
-    if (Test-Path -LiteralPath $registryFile) {
-        try {
-            $reg = Get-Content -LiteralPath $registryFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($reg.games) {
-                $cleanPath = $fullPath.Replace('/', '\')
-                if ($reg.games.PSObject.Properties[$cleanPath]) {
-                    return ($reg.games.$cleanPath.status -eq 'local_cached')
-                }
-            }
-        } catch {}
-    }
-    return $false
-}
+# Cache em memória para evitar abrir múltiplas janelas para o mesmo jogo
+$activeGames = [System.Collections.Concurrent.ConcurrentDictionary[string, DateTime]]::new()
 
 function Trigger-TelemetryWindow ([string]$targetFile) {
+    if ([string]::IsNullOrWhiteSpace($targetFile)) { return }
     $cleanPath = $targetFile.Replace('/', '\')
     $ext = [System.IO.Path]::GetExtension($cleanPath).ToLower()
 
+    # Ignorar pastas internas de assets, saves e BIOS
     if ($cleanPath -like '*_RA_*' -or $cleanPath -like '*_INSTALLERS*' -or $cleanPath -like '*cheats*') {
         return
     }
@@ -58,24 +46,25 @@ function Trigger-TelemetryWindow ([string]$targetFile) {
         return
     }
 
-    $now = [DateTime]::Now
-    $lastTime = [DateTime]::MinValue
-    if ($activeDownloads.TryGetValue($cleanPath, [ref]$lastTime)) {
-        if (($now - $lastTime).TotalSeconds -lt 10) {
-            return
-        }
-    }
-
-    if (Is-GameInCache $cleanPath) {
+    if (-not (Test-Path -LiteralPath $cleanPath)) {
         return
     }
 
-    $activeDownloads[$cleanPath] = $now
+    # Evitar disparos repetidos para o mesmo arquivo dentro de 15 segundos
+    $now = [DateTime]::Now
+    $lastTime = [DateTime]::MinValue
+    if ($activeGames.TryGetValue($cleanPath, [ref]$lastTime)) {
+        if (($now - $lastTime).TotalSeconds -lt 15) {
+            return
+        }
+    }
+    $activeGames[$cleanPath] = $now
 
-    Write-Host "`n[Watcher] Detectado carregamento de jogo na nuvem: " -NoNewline -ForegroundColor Cyan
-    Write-Host (Split-Path $cleanPath -Leaf) -ForegroundColor Yellow
+    $fileName = Split-Path $cleanPath -Leaf
+    Write-Host "`n[Watcher] JOGO DETECTADO: $fileName" -ForegroundColor Cyan
     Write-Host "[Watcher] Abrindo janela de telemetria em tempo real..." -ForegroundColor Green
 
+    # Abrir a janela de telemetria destacada em primeiro plano
     $psArgs = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
@@ -87,40 +76,72 @@ function Trigger-TelemetryWindow ([string]$targetFile) {
     Start-Process -FilePath "powershell.exe" -ArgumentList $psArgs -WindowStyle Normal
 }
 
-Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "      CloudROM Watcher - Guardião de Telemetria Ativo            " -ForegroundColor Yellow
-Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "Monitorando requisições de jogos em $baseDir..." -ForegroundColor White
-Write-Host "Sempre que um jogo na nuvem for aberto no emulador," -ForegroundColor Gray
-Write-Host "uma janela de telemetria com progresso em tempo real aparecerá!" -ForegroundColor Gray
-Write-Host "Pressione Ctrl+C para encerrar o monitor.`n" -ForegroundColor DarkGray
-
-if (-not (Test-Path -LiteralPath $baseDir)) {
-    Write-Host "Aviso: Diretório base $baseDir ainda não existe. Execute Setup_CloudROM.ps1 primeiro." -ForegroundColor Yellow
-    exit 0
+function Check-RetroArchHistory {
+    if (Test-Path -LiteralPath $historyFile) {
+        try {
+            $data = Get-Content -LiteralPath $historyFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($data.items -and $data.items.Count -gt 0) {
+                $latest = $data.items[0]
+                if ($latest.path -and $latest.path -like 'Z:\_ISOS_ROMS_\*') {
+                    Trigger-TelemetryWindow $latest.path
+                }
+            }
+        } catch {}
+    }
 }
 
-$watcher = New-Object System.IO.FileSystemWatcher
-$watcher.Path = $baseDir
-$watcher.IncludeSubdirectories = $true
-$watcher.EnableRaisingEvents = $true
-$watcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor [System.IO.NotifyFilters]::LastAccess -bor [System.IO.NotifyFilters]::Size
-
-$action = {
-    $path = $Event.SourceEventArgs.FullPath
-    Trigger-TelemetryWindow $path
+function Check-StandaloneEmulators {
+    foreach ($procName in $standaloneProcs) {
+        $procs = Get-Process -Name $procName -ErrorAction SilentlyContinue
+        foreach ($p in $procs) {
+            try {
+                $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId = $($p.Id)").CommandLine
+                if ($cmd -match '([A-Za-z]:\\[^"]+\.(chd|iso|cso|bin|cue|rvz|wbfs|7z|zip))') {
+                    $romPath = $matches[1]
+                    if (Test-Path -LiteralPath $romPath) {
+                        Trigger-TelemetryWindow $romPath
+                    }
+                }
+            } catch {}
+        }
+    }
 }
 
-$createdEvent = Register-ObjectEvent $watcher 'Created' -Action $action
-$changedEvent = Register-ObjectEvent $watcher 'Changed' -Action $action
+Clear-Host
+Write-Host "=================================================================" -ForegroundColor Cyan
+Write-Host "      CloudROM Watcher - Guardião de Telemetria Universal        " -ForegroundColor Yellow
+Write-Host "=================================================================" -ForegroundColor Cyan
+Write-Host "Status: Ativo e monitorando RetroArch e Emuladores Standalone..." -ForegroundColor White
+Write-Host "Sempre que qualquer jogo for aberto (pelo menu ou atalho)," -ForegroundColor Gray
+Write-Host "a janela de telemetria abrirá automaticamente!" -ForegroundColor Gray
+Write-Host "=================================================================`n" -ForegroundColor DarkCyan
 
+# 1. Configurar FileSystemWatcher no content_history.lpl do RetroArch
+$watcher = $null
+if (Test-Path -LiteralPath $historyDir) {
+    $watcher = New-Object System.IO.FileSystemWatcher $historyDir, (Split-Path $historyFile -Leaf)
+    $watcher.NotifyFilter = [System.IO.NotifyFilters]::LastWrite -bor [System.IO.NotifyFilters]::Size
+    $watcher.EnableRaisingEvents = $true
+
+    $action = {
+        Start-Sleep -Milliseconds 200
+        Check-RetroArchHistory
+    }
+
+    $changedEvent = Register-ObjectEvent $watcher 'Changed' -Action $action
+    Write-Host "[OK] Monitor de histórico do RetroArch engatilhado com sucesso." -ForegroundColor Green
+}
+
+# 2. Loop de monitoramento para Standalone e liveness
 try {
     while ($StayActive) {
+        Check-StandaloneEmulators
         Start-Sleep -Seconds 2
     }
 } finally {
-    Unregister-Event -SourceIdentifier $createdEvent.Name -ErrorAction SilentlyContinue
-    Unregister-Event -SourceIdentifier $changedEvent.Name -ErrorAction SilentlyContinue
-    $watcher.Dispose()
+    if ($watcher) {
+        Unregister-Event -SourceIdentifier $changedEvent.Name -ErrorAction SilentlyContinue
+        $watcher.Dispose()
+    }
     Write-Host "`n[Watcher] Monitor de telemetria encerrado." -ForegroundColor Yellow
 }

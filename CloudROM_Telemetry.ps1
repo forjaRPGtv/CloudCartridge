@@ -361,3 +361,25 @@ if ($LaunchAfter) {
     Write-Host "`n[Telemetria] Partida finalizada! Retenção ativa por $retentionDays dias." -ForegroundColor Green
     Start-Sleep -Seconds 2
 }
+if (-not $LaunchAfter) {
+    # Modo Companheiro Ativo: Janela permanece aberta durante a partida
+    Write-Host "`n==========================================================================================" -ForegroundColor DarkCyan
+    Write-Host "  [HUD COMPANHEIRO ATIVO] Jogo em execução no emulador." -ForegroundColor Cyan
+    Write-Host "  Esta janela de telemetria permanecerá aberta durante toda a sua partida." -ForegroundColor Gray
+    Write-Host "  Ao encerrar o jogo, seus saves serão enviados para a nuvem automaticamente!" -ForegroundColor Yellow
+    Write-Host "==========================================================================================" -ForegroundColor DarkCyan
+
+    $allEmuProcs = @('retroarch', 'pcsx2-qt', 'Dolphin', 'Cemu', 'rpcs3', 'citra-qt', 'duckstation-qt-x64-ReleaseLTCG')
+    while ($true) {
+        $activeEmu = Get-Process -Name $allEmuProcs -ErrorAction SilentlyContinue
+        if (-not $activeEmu) {
+            break
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    Sync-CloudSaves $FilePath
+    Write-Host "`n[Telemetria] Partida finalizada! Saves sincronizados e retenção renovada por $retentionDays dias." -ForegroundColor Green
+    Write-Host "Esta janela fechará em 5 segundos..." -ForegroundColor DarkGray
+    Start-Sleep -Seconds 5
+}
