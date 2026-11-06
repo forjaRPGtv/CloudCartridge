@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $repoRoot 'CloudCartridge.Core.psm1') -Force
 Import-Module (Join-Path $repoRoot 'CloudCartridge.SaveGuardian.psm1') -Force
+Import-Module (Join-Path $repoRoot 'CloudCartridge.Playlists.psm1') -Force
 $script:passed = 0
 $script:failed = 0
 
@@ -479,6 +480,35 @@ try {
         Assert-True ((Get-Content -LiteralPath $remoteSave -Raw) -eq 'offline-progress') 'Save retomado chegou com conteudo incorreto.'
         $persisted = @(Get-CloudCartridgeSaveSyncJobs -QueuePath $queuePath)
         Assert-True ($persisted.Count -eq 1 -and $persisted[0].attempts -eq 2) 'Estado duravel da fila incorreto.'
+    }
+
+    Invoke-Test 'Playlist merge is idempotent and preserves customizations' {
+        $playlistRoot = Join-Path $tempRoot 'playlist-merge'
+        $romRoot = Join-Path $playlistRoot 'roms'
+        $playlistPath = Join-Path $playlistRoot 'Fixture System.lpl'
+        New-Item -ItemType Directory -Path $romRoot -Force | Out-Null
+        $existingRom = Join-Path $romRoot 'Existing Game.zip'
+        $newRom = Join-Path $romRoot 'New Game.zip'
+        [System.IO.File]::WriteAllBytes($existingRom, [byte[]](1))
+        [System.IO.File]::WriteAllBytes($newRom, [byte[]](2))
+        $existing = [PSCustomObject][ordered]@{
+            version = '1.5'; default_core_path = 'custom-core.dll'; default_core_name = 'Custom Core'
+            custom_root_setting = 'keep-me'
+            items = @([PSCustomObject][ordered]@{ path = $existingRom; label = 'My Custom Label'; core_path = 'special-core.dll'; core_name = 'Special Core'; crc32 = 'ABCD'; db_name = 'Custom.lpl'; custom_item_setting = 'keep-item' })
+        }
+        Write-CloudCartridgeJsonAtomic -InputObject $existing -Path $playlistPath -Depth 10
+        $candidates = @(Get-CloudCartridgeRomCandidates -RomRoot $romRoot)
+        $preview = Merge-CloudCartridgePlaylist -PlaylistPath $playlistPath -DiscoveredItems $candidates -DefaultCorePath 'default.dll' -DefaultCoreName 'Default Core'
+        Assert-True ($preview.added -eq 1 -and -not $preview.applied) 'Preview da playlist incorreto.'
+        $first = Merge-CloudCartridgePlaylist -PlaylistPath $playlistPath -DiscoveredItems $candidates -DefaultCorePath 'default.dll' -DefaultCoreName 'Default Core' -Apply
+        $firstHash = (Get-FileHash -LiteralPath $playlistPath -Algorithm SHA256).Hash
+        $second = Merge-CloudCartridgePlaylist -PlaylistPath $playlistPath -DiscoveredItems $candidates -DefaultCorePath 'default.dll' -DefaultCoreName 'Default Core' -Apply
+        $secondHash = (Get-FileHash -LiteralPath $playlistPath -Algorithm SHA256).Hash
+        $after = Get-Content -LiteralPath $playlistPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ($first.added -eq 1 -and $second.added -eq 0 -and $firstHash -eq $secondHash) 'Duas varreduras mudaram o resultado.'
+        Assert-True ($after.custom_root_setting -eq 'keep-me') 'Configuracao customizada da playlist foi perdida.'
+        $kept = @($after.items | Where-Object { $_.path -eq $existingRom })[0]
+        Assert-True ($kept.label -eq 'My Custom Label' -and $kept.custom_item_setting -eq 'keep-item' -and $kept.core_path -eq 'special-core.dll') 'Entrada customizada foi reescrita.'
     }
 
     Invoke-Test 'Publish script has no force push' {
