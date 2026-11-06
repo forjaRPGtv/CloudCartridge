@@ -79,8 +79,26 @@ function Use-CloudCartridgeHostInvite {
     $storedInvite = @($database.invites | Where-Object { $_.invite_id -eq $invite[0].invite_id } | Select-Object -First 1)
     $storedInvite[0].used_utc = [DateTime]::UtcNow.ToString('o')
     $storedInvite[0].profile_id = $profile.profile_id
+    $storedProfile = @($database.profiles | Where-Object { $_.profile_id -eq $profile.profile_id } | Select-Object -First 1)
+    $storedProfile[0].recovery_confirmed = $false
+    foreach ($device in @($storedProfile[0].devices)) { $device.active = $false }
     Write-CloudCartridgeJsonAtomic -InputObject $database -Path $DatabasePath -Depth 10
     return $profile
+}
+
+function Confirm-CloudCartridgeRecoveryKey {
+    [CmdletBinding()]
+    param([string]$DatabasePath, [string]$ProfileId, [string]$RecoveryKey)
+    $database = Read-CloudCartridgeHostDatabase -DatabasePath $DatabasePath
+    $profile = @($database.profiles | Where-Object { $_.profile_id -eq $ProfileId -and $_.active } | Select-Object -First 1)
+    if ($profile.Count -eq 0 -or -not $RecoveryKey) { throw 'Confirmacao de recovery key falhou.' }
+    $salt = [Convert]::FromBase64String([string]$profile[0].recovery_salt)
+    $verifier = Get-CloudCartridgeRecoveryVerifier -RecoveryKey $RecoveryKey -Salt $salt -Iterations ([int]$profile[0].recovery_iterations)
+    if ($verifier -ne $profile[0].recovery_verifier) { throw 'Confirmacao de recovery key falhou.' }
+    $profile[0].recovery_confirmed = $true
+    if (@($profile[0].devices).Count -gt 0) { $profile[0].devices[0].active = $true }
+    Write-CloudCartridgeJsonAtomic -InputObject $database -Path $DatabasePath -Depth 10
+    return [PSCustomObject]@{ confirmed = $true; profile_id = $ProfileId }
 }
 
 function Save-CloudCartridgeClientCredential {
@@ -139,6 +157,7 @@ function New-CloudCartridgeHostProfile {
         profile_id = $profileId; profile_code = $ProfileCode; display_name = $DisplayName; active = $true
         recovery_salt = [Convert]::ToBase64String($salt); recovery_iterations = 200000
         recovery_verifier = Get-CloudCartridgeRecoveryVerifier -RecoveryKey $recoveryKey -Salt $salt
+        recovery_confirmed = $true
         devices = @([PSCustomObject]@{ device_id = [Guid]::NewGuid().ToString('D'); token_hash = Get-CloudCartridgeSha256Text $deviceToken; active = $true; created_utc = [DateTime]::UtcNow.ToString('o') })
         created_utc = [DateTime]::UtcNow.ToString('o'); revoked_utc = $null
     }
@@ -160,12 +179,33 @@ function Test-CloudCartridgeHostDeviceCredential {
     return @($profile[0].devices | Where-Object { $_.active -and $_.token_hash -eq $tokenHash }).Count -gt 0
 }
 
+function Get-CloudCartridgeHostProfileSummary {
+    [CmdletBinding()]
+    param([string]$DatabasePath, [string]$ProfileId)
+    $database = Read-CloudCartridgeHostDatabase -DatabasePath $DatabasePath
+    $profile = @($database.profiles | Where-Object { $_.profile_id -eq $ProfileId -and $_.active } | Select-Object -First 1)
+    if ($profile.Count -eq 0) { return $null }
+    return [PSCustomObject]@{ profile_id = $profile[0].profile_id; profile_code = $profile[0].profile_code; display_name = $profile[0].display_name; active = [bool]$profile[0].active; devices = @($profile[0].devices | Where-Object { $_.active }).Count }
+}
+
+function Get-CloudCartridgeHostStatus {
+    [CmdletBinding()]
+    param([string]$DatabasePath)
+    $database = Read-CloudCartridgeHostDatabase -DatabasePath $DatabasePath
+    $profiles = @($database.profiles | ForEach-Object {
+        [PSCustomObject]@{ profile_id = $_.profile_id; profile_code = $_.profile_code; display_name = $_.display_name; active = [bool]$_.active; devices = @($_.devices | Where-Object { $_.active }).Count; created_utc = $_.created_utc; revoked_utc = $_.revoked_utc }
+    })
+    $active = @($profiles | Where-Object { $_.active }).Count
+    $pending = @($database.invites | Where-Object { -not $_.used_utc -and [DateTimeOffset]::Parse([string]$_.expires_utc).UtcDateTime -gt [DateTime]::UtcNow }).Count
+    return [PSCustomObject]@{ active_guests = $active; capacity = 5; free_slots = 5 - $active; pending_invites = $pending; profiles = $profiles }
+}
+
 function New-CloudCartridgeRecoveredDevice {
     [CmdletBinding()]
     param([string]$DatabasePath, [string]$ProfileCode, [string]$RecoveryKey)
     $database = Read-CloudCartridgeHostDatabase -DatabasePath $DatabasePath
     $profile = @($database.profiles | Where-Object { $_.profile_code -ieq $ProfileCode -and $_.active } | Select-Object -First 1)
-    if ($profile.Count -eq 0 -or -not $RecoveryKey) { throw 'Recuperacao negada.' }
+    if ($profile.Count -eq 0 -or -not $RecoveryKey -or -not $profile[0].recovery_confirmed) { throw 'Recuperacao negada.' }
     $salt = [Convert]::FromBase64String([string]$profile[0].recovery_salt)
     $verifier = Get-CloudCartridgeRecoveryVerifier -RecoveryKey $RecoveryKey -Salt $salt -Iterations ([int]$profile[0].recovery_iterations)
     if ($verifier -ne $profile[0].recovery_verifier) { throw 'Recuperacao negada.' }
@@ -199,4 +239,4 @@ function Revoke-CloudCartridgeHostProfile {
     return $profile[0]
 }
 
-Export-ModuleMember -Function @('New-CloudCartridgeHostInvite', 'Use-CloudCartridgeHostInvite', 'New-CloudCartridgeHostProfile', 'Test-CloudCartridgeHostDeviceCredential', 'New-CloudCartridgeRecoveredDevice', 'Get-CloudCartridgeAuthorizedSavePath', 'Revoke-CloudCartridgeHostProfile', 'Save-CloudCartridgeClientCredential', 'Get-CloudCartridgeClientCredential')
+Export-ModuleMember -Function @('New-CloudCartridgeHostInvite', 'Use-CloudCartridgeHostInvite', 'Confirm-CloudCartridgeRecoveryKey', 'New-CloudCartridgeHostProfile', 'Test-CloudCartridgeHostDeviceCredential', 'Get-CloudCartridgeHostProfileSummary', 'Get-CloudCartridgeHostStatus', 'New-CloudCartridgeRecoveredDevice', 'Get-CloudCartridgeAuthorizedSavePath', 'Revoke-CloudCartridgeHostProfile', 'Save-CloudCartridgeClientCredential', 'Get-CloudCartridgeClientCredential')

@@ -12,17 +12,22 @@
 - Revogação invalida dispositivos e preserva integralmente a pasta de saves.
 - Convites individuais expiram, reservam uma das cinco vagas, armazenam somente hash do token e são de uso único.
 - Credenciais do cliente usam DPAPI `CurrentUser`; se o perfil criptográfico não estiver carregado, a gravação aborta sem fallback em texto puro.
+- Onboarding por convite mantém o dispositivo inativo até a recovery key ser repetida corretamente.
+- API exige perfil + bearer válido, timestamp recente e nonce não reutilizado; aplica rate limit por endereço.
+- Audit log registra rota/status sem token, recovery key ou nonce.
+- Listener TCP/HTTP usa loopback por padrão; LAN/Tailscale exige `-AllowLan`, enquanto wildcard e IP público são recusados.
+- `Iniciar_Host.cmd` oferece inicialização em um clique após existir banco configurado.
+- CLI administrativo: `host monitor`, `host users list|invite|revoke`; convite/revogação são prévia até `--yes`.
 
 ## Evidência
 
-A suíte completa está em **36 testes aprovados, 0 falhas**. Além do isolamento, os testes comprovam convite sem token negado, uso único, token ausente do banco em texto puro e limite de cinco convites pendentes.
+A suíte completa está em **38 testes aprovados, 0 falhas**. Além do isolamento, os testes comprovam confirmação obrigatória da recovery key, 401 sem credencial, bloqueio de replay, rate limit, token A recusado para B, log redigido e resposta real do listener loopback.
 
 O runner automatizado não possui perfil DPAPI interativo carregado; nesse contexto a implementação foi confirmada como *fail-closed*, sem criar arquivo parcial. O roundtrip do contrato de proteção foi validado com provedor injetado de fixture. A validação DPAPI real permanece pendente em sessão Windows interativa.
 
 ## Próximos pontos
 
-- Confirmação interativa obrigatória da recovery key no onboarding.
 - Smoke DPAPI real em sessão Windows interativa.
-- Gateway LAN autenticado, sem bind público por padrão.
-- Rate limiting, anti-replay, auditoria redigida e monitor TUI.
-- Teste de rede LAN e documentação opcional para Tailscale/WireGuard.
+- TLS de aplicação ou VPN obrigatória documentada para tráfego fora de loopback; bearer em HTTP puro não deve cruzar rede não confiável.
+- Teste físico entre dois PCs na LAN e documentação opcional para Tailscale/WireGuard.
+- Monitor TUI contínuo de eventos/downloads, além do snapshot atual do CLI.

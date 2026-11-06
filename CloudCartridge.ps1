@@ -9,6 +9,7 @@ $scriptDir = $PSScriptRoot
 Import-Module (Join-Path $scriptDir 'CloudCartridge.Core.psm1') -Force
 Import-Module (Join-Path $scriptDir 'CloudCartridge.SaveGuardian.psm1') -Force
 Import-Module (Join-Path $scriptDir 'CloudCartridge.Playlists.psm1') -Force
+Import-Module (Join-Path $scriptDir 'CloudCartridge.Host.psm1') -Force
 
 $jsonOutput = $Arguments -contains '--json'
 $confirmed = $Arguments -contains '--yes'
@@ -422,7 +423,36 @@ switch ($Command.ToLowerInvariant()) {
             default { throw 'Use: cloudcartridge thumbnails plan|download [opcoes]' }
         }
     }
+    'host' {
+        $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'monitor' }
+        $databasePath = Get-ArgumentValue '--database'
+        if ([string]::IsNullOrWhiteSpace($databasePath)) { $databasePath = Join-Path $scriptDir 'host-data\admin\users.json' }
+        switch ($subcommand) {
+            'monitor' { Write-Result (Get-CloudCartridgeHostStatus -DatabasePath $databasePath) }
+            'users' {
+                $action = if ($filteredArguments.Count -gt 1) { $filteredArguments[1] } else { 'list' }
+                switch ($action) {
+                    'list' { Write-Result @((Get-CloudCartridgeHostStatus -DatabasePath $databasePath).profiles) }
+                    'invite' {
+                        $name = Get-ArgumentValue '--name'
+                        $code = Get-ArgumentValue '--code'
+                        if ([string]::IsNullOrWhiteSpace($name)) { throw 'Use: cloudcartridge host users invite --name <nome> [--code <8 chars>] [--database <arquivo>] [--yes] [--json]' }
+                        if (-not $confirmed) { Write-Result ([PSCustomObject]@{ applied = $false; dry_run = $true; display_name = $name; profile_code = $code }) }
+                        else { Write-Result (New-CloudCartridgeHostInvite -DatabasePath $databasePath -DisplayName $name -ProfileCode $code) }
+                    }
+                    'revoke' {
+                        $code = if ($filteredArguments.Count -gt 2) { $filteredArguments[2] } else { '' }
+                        if ([string]::IsNullOrWhiteSpace($code)) { throw 'Use: cloudcartridge host users revoke <profile_code> [--database <arquivo>] [--yes] [--json]' }
+                        if (-not $confirmed) { Write-Result ([PSCustomObject]@{ applied = $false; dry_run = $true; profile_code = $code }) }
+                        else { Write-Result (Revoke-CloudCartridgeHostProfile -DatabasePath $databasePath -ProfileCode $code) }
+                    }
+                    default { throw 'Use: cloudcartridge host users list|invite|revoke [opcoes]' }
+                }
+            }
+            default { throw 'Use: cloudcartridge host monitor|users [opcoes]' }
+        }
+    }
     default {
-        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache, downloads, save, library, playlist ou thumbnails."
+        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache, downloads, save, library, playlist, thumbnails ou host."
     }
 }

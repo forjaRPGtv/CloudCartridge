@@ -7,6 +7,7 @@ Import-Module (Join-Path $repoRoot 'CloudCartridge.Core.psm1') -Force
 Import-Module (Join-Path $repoRoot 'CloudCartridge.SaveGuardian.psm1') -Force
 Import-Module (Join-Path $repoRoot 'CloudCartridge.Playlists.psm1') -Force
 Import-Module (Join-Path $repoRoot 'CloudCartridge.Host.psm1') -Force
+Import-Module (Join-Path $repoRoot 'CloudCartridge.HostApi.psm1') -Force
 $script:passed = 0
 $script:failed = 0
 
@@ -186,6 +187,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Core.psm1') -Destination $cliRoot
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.SaveGuardian.psm1') -Destination $cliRoot
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Playlists.psm1') -Destination $cliRoot
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Host.psm1') -Destination $cliRoot
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.ps1') -Destination $cliRoot
         Write-CloudCartridgeJsonAtomic -InputObject ([PSCustomObject]@{
             local_roms_path = $cliLibrary
@@ -658,6 +660,12 @@ try {
         try { Use-CloudCartridgeHostInvite -DatabasePath $databasePath -DataRoot $hostRoot -InviteToken '' | Out-Null } catch { $noTokenDenied = $true }
         Assert-True $noTokenDenied 'Instalador sem token criou perfil.'
         $profile = Use-CloudCartridgeHostInvite -DatabasePath $databasePath -DataRoot $hostRoot -InviteToken $invite.invite_token
+        Assert-True (-not (Test-CloudCartridgeHostDeviceCredential -DatabasePath $databasePath -ProfileId $profile.profile_id -DeviceToken $profile.device_token)) 'Dispositivo autenticou antes de confirmar recovery key.'
+        $wrongConfirmationDenied = $false
+        try { Confirm-CloudCartridgeRecoveryKey -DatabasePath $databasePath -ProfileId $profile.profile_id -RecoveryKey 'wrong-key' | Out-Null } catch { $wrongConfirmationDenied = $true }
+        Assert-True $wrongConfirmationDenied 'Recovery key incorreta confirmou onboarding.'
+        $confirmation = Confirm-CloudCartridgeRecoveryKey -DatabasePath $databasePath -ProfileId $profile.profile_id -RecoveryKey $profile.recovery_key
+        Assert-True ($confirmation.confirmed -and (Test-CloudCartridgeHostDeviceCredential -DatabasePath $databasePath -ProfileId $profile.profile_id -DeviceToken $profile.device_token)) 'Dispositivo nao ativou apos confirmacao correta.'
         $reuseDenied = $false
         try { Use-CloudCartridgeHostInvite -DatabasePath $databasePath -DataRoot $hostRoot -InviteToken $invite.invite_token | Out-Null } catch { $reuseDenied = $true }
         Assert-True $reuseDenied 'Convite foi reutilizado.'
@@ -679,6 +687,15 @@ try {
         Assert-True (-not $credentialText.Contains($profile.device_token) -and -not $credentialText.Contains($profile.recovery_key)) 'DPAPI deixou segredo em texto puro.'
         $loaded = Get-CloudCartridgeClientCredential -CredentialPath $credentialPath -UnprotectAction $testUnprotect
         Assert-True ($loaded.device_token -eq $profile.device_token -and $loaded.recovery_key -eq $profile.recovery_key) 'DPAPI nao recuperou credenciais do usuario atual.'
+        $monitorOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.ps1') host monitor --database $databasePath --json 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "CLI host monitor falhou: $($monitorOutput -join ' ')"
+        $monitor = ($monitorOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($monitor.active_guests -eq 1 -and $monitor.free_slots -eq 4) 'Monitor do Host retornou capacidade incorreta.'
+        $databaseHash = (Get-FileHash -LiteralPath $databasePath -Algorithm SHA256).Hash
+        $invitePreviewOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.ps1') host users invite --name Preview --code PREVIEW1 --database $databasePath --json 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "CLI invite preview falhou: $($invitePreviewOutput -join ' ')"
+        $invitePreview = ($invitePreviewOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($invitePreview.dry_run -and -not $invitePreview.applied -and (Get-FileHash -LiteralPath $databasePath -Algorithm SHA256).Hash -eq $databaseHash) 'Preview de convite alterou o banco.'
 
         $pendingRoot = Join-Path $tempRoot 'pending-invites'
         $pendingDb = Join-Path $pendingRoot 'users.json'
@@ -686,6 +703,61 @@ try {
         $pendingSixthDenied = $false
         try { New-CloudCartridgeHostInvite -DatabasePath $pendingDb -DisplayName 'Pending 6' -ProfileCode 'PND00006' | Out-Null } catch { $pendingSixthDenied = $true }
         Assert-True $pendingSixthDenied 'Convites pendentes excederam cinco vagas.'
+    }
+
+    Invoke-Test 'Host API authenticates, isolates, rate-limits and rejects replay' {
+        $hostRoot = Join-Path $tempRoot 'host-api'
+        $databasePath = Join-Path $hostRoot 'admin\users.json'
+        $userA = New-CloudCartridgeHostProfile -DatabasePath $databasePath -DataRoot $hostRoot -DisplayName 'User A' -ProfileCode 'APIUSERA'
+        $userB = New-CloudCartridgeHostProfile -DatabasePath $databasePath -DataRoot $hostRoot -DisplayName 'User B' -ProfileCode 'APIUSERB'
+        $unauthorized = Invoke-CloudCartridgeHostApiRequest -Method GET -Path '/v1/profile' -DatabasePath $databasePath -DataRoot $hostRoot -ClientAddress '10.0.0.1'
+        Assert-True ($unauthorized.status -eq 401) 'API sem credencial nao foi recusada.'
+        $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
+        $headersA = @{ 'X-Profile-Id' = $userA.profile_id; Authorization = "Bearer $($userA.device_token)"; 'X-Request-Nonce' = 'nonce-user-a-0001'; 'X-Request-Timestamp' = $timestamp }
+        $profileResponse = Invoke-CloudCartridgeHostApiRequest -Method GET -Path '/v1/profile' -Headers $headersA -DatabasePath $databasePath -DataRoot $hostRoot -ClientAddress '10.0.0.2'
+        Assert-True ($profileResponse.status -eq 200 -and $profileResponse.body.data.profile_id -eq $userA.profile_id) 'API nao retornou o proprio perfil.'
+        $replay = Invoke-CloudCartridgeHostApiRequest -Method GET -Path '/v1/profile' -Headers $headersA -DatabasePath $databasePath -DataRoot $hostRoot -ClientAddress '10.0.0.2'
+        Assert-True ($replay.status -eq 409 -and $replay.body.code -eq 'replay_detected') 'Replay de nonce nao foi bloqueado.'
+        $crossHeaders = @{ 'X-Profile-Id' = $userB.profile_id; Authorization = "Bearer $($userA.device_token)"; 'X-Request-Nonce' = 'nonce-cross-user-01'; 'X-Request-Timestamp' = $timestamp }
+        $cross = Invoke-CloudCartridgeHostApiRequest -Method GET -Path '/v1/profile' -Headers $crossHeaders -DatabasePath $databasePath -DataRoot $hostRoot -ClientAddress '10.0.0.3'
+        Assert-True ($cross.status -eq 401) 'Token do usuario A acessou perfil B via API.'
+        $saveHeaders = @{ 'X-Profile-Id' = $userA.profile_id; Authorization = "Bearer $($userA.device_token)"; 'X-Request-Nonce' = 'nonce-save-user-a1'; 'X-Request-Timestamp' = $timestamp }
+        $saveResponse = Invoke-CloudCartridgeHostApiRequest -Method POST -Path '/v1/saves/resolve' -Headers $saveHeaders -Body ([PSCustomObject]@{ relative_path = 'retroarch\game.srm' }) -DatabasePath $databasePath -DataRoot $hostRoot -ClientAddress '10.0.0.2'
+        Assert-True ($saveResponse.status -eq 200 -and $saveResponse.body.data.resolved_path.StartsWith($userA.save_root, [System.StringComparison]::OrdinalIgnoreCase)) 'API resolveu save fora do perfil A.'
+        $rate1 = Invoke-CloudCartridgeHostApiRequest -Method GET -Path '/health' -DatabasePath $databasePath -DataRoot $hostRoot -ClientAddress '10.0.0.9' -RateLimit 2
+        $rate2 = Invoke-CloudCartridgeHostApiRequest -Method GET -Path '/health' -DatabasePath $databasePath -DataRoot $hostRoot -ClientAddress '10.0.0.9' -RateLimit 2
+        $rate3 = Invoke-CloudCartridgeHostApiRequest -Method GET -Path '/health' -DatabasePath $databasePath -DataRoot $hostRoot -ClientAddress '10.0.0.9' -RateLimit 2
+        Assert-True ($rate1.status -eq 200 -and $rate2.status -eq 200 -and $rate3.status -eq 429) 'Rate limit nao bloqueou excesso.'
+        $auditText = Get-Content -LiteralPath (Join-Path $hostRoot 'admin\audit\host-api.jsonl') -Raw -Encoding UTF8
+        Assert-True (-not $auditText.Contains($userA.device_token) -and -not $auditText.Contains('nonce-user-a-0001')) 'Audit log vazou token ou nonce.'
+    }
+
+    Invoke-Test 'Host listener binds only approved private addresses' {
+        Assert-True (Test-CloudCartridgeHostBindAddress -Address '127.0.0.1') 'Loopback foi recusado.'
+        Assert-True (-not (Test-CloudCartridgeHostBindAddress -Address '192.168.1.20')) 'LAN foi aceita sem autorizacao.'
+        Assert-True (Test-CloudCartridgeHostBindAddress -Address '192.168.1.20' -AllowLan) 'LAN privada autorizada foi recusada.'
+        Assert-True (Test-CloudCartridgeHostBindAddress -Address '100.64.1.20' -AllowLan) 'Faixa Tailscale autorizada foi recusada.'
+        Assert-True (-not (Test-CloudCartridgeHostBindAddress -Address '8.8.8.8' -AllowLan)) 'Endereco publico foi aceito.'
+        Assert-True (-not (Test-CloudCartridgeHostBindAddress -Address '0.0.0.0' -AllowLan)) 'Bind wildcard foi aceito.'
+
+        $listenerRoot = Join-Path $tempRoot 'listener-smoke'
+        $port = Get-Random -Minimum 43000 -Maximum 49000
+        $serverScript = Join-Path $repoRoot 'CloudCartridge.HostServer.ps1'
+        $serverJob = Start-Job -ScriptBlock {
+            param($Script, $Root, $Port)
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script -DatabasePath (Join-Path $Root 'users.json') -DataRoot $Root -ListenAddress '127.0.0.1' -Port $Port -Once
+            exit $LASTEXITCODE
+        } -ArgumentList $serverScript, $listenerRoot, $port
+        try {
+            $health = $null
+            for ($attempt = 0; $attempt -lt 40 -and $null -eq $health; $attempt++) {
+                try { $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -UseBasicParsing -TimeoutSec 1 } catch { Start-Sleep -Milliseconds 100 }
+            }
+            $null = Wait-Job -Job $serverJob -Timeout 10
+            $serverOutput = Receive-Job -Job $serverJob 2>&1
+            Assert-True ($null -ne $health -and $health.ok -and $health.code -eq 'ok') "Listener loopback nao respondeu: $($serverOutput -join ' ')"
+            Assert-True ($serverJob.State -eq 'Completed') 'Listener -Once nao encerrou apos responder.'
+        } finally { Remove-Job -Job $serverJob -Force -ErrorAction SilentlyContinue }
     }
 
     Invoke-Test 'Publish script has no force push' {
