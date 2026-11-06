@@ -375,11 +375,19 @@ switch ($Command.ToLowerInvariant()) {
     }
     'library' {
         $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'index' }
-        if ($subcommand -ne 'index') { throw 'Use: cloudcartridge library index --root <pasta> --index <arquivo> [--yes] [--json]' }
-        $libraryRoot = Get-ArgumentValue '--root'
         $indexPath = Get-ArgumentValue '--index'
-        if ([string]::IsNullOrWhiteSpace($libraryRoot) -or [string]::IsNullOrWhiteSpace($indexPath)) { throw 'Use: cloudcartridge library index --root <pasta> --index <arquivo> [--yes] [--json]' }
-        Write-Result (Update-CloudCartridgeCatalogIndex -LibraryRoot $libraryRoot -IndexPath $indexPath -Apply:$confirmed)
+        switch ($subcommand) {
+            'index' {
+                $libraryRoot = Get-ArgumentValue '--root'
+                if ([string]::IsNullOrWhiteSpace($libraryRoot) -or [string]::IsNullOrWhiteSpace($indexPath)) { throw 'Use: cloudcartridge library index --root <pasta> --index <arquivo> [--yes] [--json]' }
+                Write-Result (Update-CloudCartridgeCatalogIndex -LibraryRoot $libraryRoot -IndexPath $indexPath -Apply:$confirmed)
+            }
+            'inventory' {
+                if ([string]::IsNullOrWhiteSpace($indexPath)) { throw 'Use: cloudcartridge library inventory --index <arquivo> [--json]' }
+                Write-Result @(Get-CloudCartridgeCatalogInventory -IndexPath $indexPath)
+            }
+            default { throw 'Use: cloudcartridge library index|inventory [opcoes]' }
+        }
     }
     'playlist' {
         $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'sync' }
@@ -396,11 +404,23 @@ switch ($Command.ToLowerInvariant()) {
     }
     'thumbnails' {
         $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'plan' }
-        $playlistPath = Get-ArgumentValue '--playlist'
-        $thumbnailDirectory = Get-ArgumentValue '--directory'
-        if ($subcommand -ne 'plan' -or [string]::IsNullOrWhiteSpace($playlistPath) -or [string]::IsNullOrWhiteSpace($thumbnailDirectory)) { throw 'Use: cloudcartridge thumbnails plan --playlist <arquivo> --directory <pasta> [--json]' }
-        $playlistData = Get-Content -LiteralPath $playlistPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        Write-Result @(Repair-CloudCartridgeMissingThumbnails -PlaylistItems @($playlistData.items) -ThumbnailDirectory $thumbnailDirectory)
+        switch ($subcommand) {
+            'plan' {
+                $playlistPath = Get-ArgumentValue '--playlist'
+                $thumbnailDirectory = Get-ArgumentValue '--directory'
+                if ([string]::IsNullOrWhiteSpace($playlistPath) -or [string]::IsNullOrWhiteSpace($thumbnailDirectory)) { throw 'Use: cloudcartridge thumbnails plan --playlist <arquivo> --directory <pasta> [--json]' }
+                $playlistData = Get-Content -LiteralPath $playlistPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                Write-Result @(Repair-CloudCartridgeMissingThumbnails -PlaylistItems @($playlistData.items) -ThumbnailDirectory $thumbnailDirectory)
+            }
+            'download' {
+                $url = Get-ArgumentValue '--url'
+                $target = Get-ArgumentValue '--target'
+                if ([string]::IsNullOrWhiteSpace($url) -or [string]::IsNullOrWhiteSpace($target)) { throw 'Use: cloudcartridge thumbnails download --url <url-oficial> --target <arquivo> [--yes] [--json]' }
+                if (-not $confirmed) { Write-Result ([PSCustomObject]@{ applied = $false; dry_run = $true; url = $url; target = $target }) }
+                else { Write-Result (Invoke-CloudCartridgeThumbnailDownload -Url $url -TargetPath $target) }
+            }
+            default { throw 'Use: cloudcartridge thumbnails plan|download [opcoes]' }
+        }
     }
     default {
         throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache, downloads, save, library, playlist ou thumbnails."

@@ -17,13 +17,16 @@ Os scripts históricos foram encontrados em `RetroArch-Tools/scripts`. Eles cont
 - Índice persistente reaproveita metadados de arquivos cujo tamanho e `mtime` não mudaram.
 - Reparo de thumbnails só cria arquivos ausentes por troca final; arte existente nunca é aberta para escrita.
 - CLI: `library index`, `playlist sync` e `thumbnails plan`, com prévia por padrão.
+- Inventário agregado por sistema, extensão, quantidade e bytes via `library inventory`.
+- Downloader aceita apenas HTTPS em `thumbnails.libretro.com`, valida assinatura PNG e tamanho antes da promoção atômica.
 
 ## Evidência
 
-A suíte completa está em **32 testes aprovados, 0 falhas**. Além da idempotência por SHA-256, os testes cobrem `.m3u`, atualização incremental do índice e preservação byte a byte de thumbnail personalizada.
+A suíte completa está em **34 testes aprovados, 0 falhas**. Além da idempotência por SHA-256, os testes cobrem `.m3u`, atualização incremental, inventário por sistema, preservação byte a byte de arte personalizada e rejeição de host/arquivo inválido.
+
+O índice também foi exercitado com **20.000 arquivos reais em fixture temporária** e concluiu dentro do gate de 60 segundos.
 
 ## Próximos pontos
 
-- Medição de desempenho com biblioteca equivalente a 20 mil títulos.
-- Downloader oficial de thumbnails com validação de conteúdo e retomada.
-- Relatório agregado de inventário/compatibilidade por sistema.
+- Retomada por bloco para downloads grandes de thumbnails (não necessária para PNGs pequenos no fluxo atual).
+- Cruzar o inventário com compatibilidade efetiva de cores/emuladores.

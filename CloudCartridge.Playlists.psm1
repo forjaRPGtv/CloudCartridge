@@ -125,6 +125,56 @@ function Update-CloudCartridgeCatalogIndex {
     return [PSCustomObject]@{ applied = [bool]$Apply; dry_run = -not $Apply; total = $items.Count; reused = $reused; updated = $updated; index_path = $IndexPath; index = $index }
 }
 
+function Get-CloudCartridgeCatalogInventory {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$IndexPath)
+    if (-not (Test-Path -LiteralPath $IndexPath -PathType Leaf)) { throw 'Indice de catalogo nao encontrado.' }
+    $index = Get-Content -LiteralPath $IndexPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    return @($index.items | Group-Object system | Sort-Object Name | ForEach-Object {
+        $groupItems = @($_.Group)
+        [PSCustomObject][ordered]@{
+            system = $_.Name
+            titles = $groupItems.Count
+            bytes = [long](($groupItems | Measure-Object -Property size -Sum).Sum)
+            extensions = @($groupItems | Group-Object extension | Sort-Object Name | ForEach-Object { [PSCustomObject]@{ extension = $_.Name; count = $_.Count } })
+        }
+    })
+}
+
+function Test-CloudCartridgePngFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $item = Get-Item -LiteralPath $Path
+    if ($item.Length -lt 8 -or $item.Length -gt 20MB) { return $false }
+    $expected = [byte[]](137, 80, 78, 71, 13, 10, 26, 10)
+    $actual = New-Object byte[] 8
+    $stream = [System.IO.File]::OpenRead($Path)
+    try { if ($stream.Read($actual, 0, 8) -ne 8) { return $false } } finally { $stream.Dispose() }
+    for ($index = 0; $index -lt 8; $index++) { if ($actual[$index] -ne $expected[$index]) { return $false } }
+    return $true
+}
+
+function Invoke-CloudCartridgeThumbnailDownload {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$TargetPath,
+        [scriptblock]$WebRequestAction
+    )
+    $uri = [Uri]$Url
+    if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'thumbnails.libretro.com') { throw 'Thumbnail recusada: origem nao oficial.' }
+    if (Test-Path -LiteralPath $TargetPath -PathType Leaf) { return [PSCustomObject]@{ status = 'preserved_existing'; path = $TargetPath } }
+    $directory = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($TargetPath))
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $temporary = "$TargetPath.partial.$([Guid]::NewGuid().ToString('N'))"
+    try {
+        if ($WebRequestAction) { & $WebRequestAction $Url $temporary } else { Invoke-WebRequest -Uri $Url -OutFile $temporary -UseBasicParsing -TimeoutSec 30 }
+        if (-not (Test-CloudCartridgePngFile -Path $temporary)) { throw 'Thumbnail baixada nao e PNG valida.' }
+        Move-Item -LiteralPath $temporary -Destination $TargetPath
+        return [PSCustomObject]@{ status = 'downloaded'; path = $TargetPath; bytes = (Get-Item -LiteralPath $TargetPath).Length }
+    } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+}
+
 function Repair-CloudCartridgeMissingThumbnails {
     [CmdletBinding()]
     param(
@@ -150,7 +200,7 @@ function Repair-CloudCartridgeMissingThumbnails {
         $temporary = "$target.partial"
         if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
         $fetched = [bool](& $Fetcher $item $temporary)
-        if ($fetched -and (Test-Path -LiteralPath $temporary -PathType Leaf)) {
+        if ($fetched -and (Test-CloudCartridgePngFile -Path $temporary)) {
             Move-Item -LiteralPath $temporary -Destination $target
             $results += [PSCustomObject]@{ label = $item.label; path = $target; decision = 'downloaded' }
         } else {
@@ -161,4 +211,4 @@ function Repair-CloudCartridgeMissingThumbnails {
     return $results
 }
 
-Export-ModuleMember -Function @('Merge-CloudCartridgePlaylist', 'Get-CloudCartridgeRomCandidates', 'Update-CloudCartridgeCatalogIndex', 'Repair-CloudCartridgeMissingThumbnails')
+Export-ModuleMember -Function @('Merge-CloudCartridgePlaylist', 'Get-CloudCartridgeRomCandidates', 'Update-CloudCartridgeCatalogIndex', 'Get-CloudCartridgeCatalogInventory', 'Invoke-CloudCartridgeThumbnailDownload', 'Repair-CloudCartridgeMissingThumbnails')

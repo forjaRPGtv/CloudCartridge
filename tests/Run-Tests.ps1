@@ -549,6 +549,32 @@ try {
         [System.IO.File]::WriteAllBytes($gameB, [byte[]](3, 4, 5, 6))
         $third = Update-CloudCartridgeCatalogIndex -LibraryRoot $libraryRoot -IndexPath $indexPath -Apply
         Assert-True ($third.reused -eq 1 -and $third.updated -eq 1) 'Mudanca incremental nao foi detectada.'
+        $inventory = @(Get-CloudCartridgeCatalogInventory -IndexPath $indexPath)
+        Assert-True ($inventory.Count -eq 1 -and $inventory[0].system -eq 'Fixture System' -and $inventory[0].titles -eq 2) 'Inventario agregado por sistema incorreto.'
+        $cliOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.ps1') library inventory --index $indexPath --json 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "CLI library inventory falhou: $($cliOutput -join ' ')"
+        $cliInventory = @(($cliOutput -join "`n") | ConvertFrom-Json)
+        Assert-True ($cliInventory.Count -eq 1 -and $cliInventory[0].titles -eq 2) 'CLI inventory retornou resumo incorreto.'
+    }
+
+    Invoke-Test 'Catalog indexes 20000 titles within safety budget' {
+        $largeRoot = Join-Path $tempRoot 'catalog-20k'
+        $watch = [System.Diagnostics.Stopwatch]::StartNew()
+        for ($systemIndex = 0; $systemIndex -lt 20; $systemIndex++) {
+            $systemRoot = Join-Path $largeRoot ("System-{0:D2}" -f $systemIndex)
+            New-Item -ItemType Directory -Path $systemRoot -Force | Out-Null
+            for ($gameIndex = 0; $gameIndex -lt 1000; $gameIndex++) {
+                $stream = [System.IO.File]::Create((Join-Path $systemRoot ("Game-{0:D4}.zip" -f $gameIndex)))
+                $stream.Dispose()
+            }
+        }
+        $creationSeconds = $watch.Elapsed.TotalSeconds
+        $watch.Restart()
+        $result = Update-CloudCartridgeCatalogIndex -LibraryRoot $largeRoot -IndexPath (Join-Path $tempRoot 'catalog-20k.json')
+        $scanSeconds = $watch.Elapsed.TotalSeconds
+        $watch.Stop()
+        Assert-True ($result.total -eq 20000) 'Indice de escala nao contem 20000 titulos.'
+        Assert-True ($scanSeconds -lt 60) "Indice de 20000 titulos excedeu 60s: $scanSeconds s (criacao: $creationSeconds s)."
     }
 
     Invoke-Test 'Thumbnail repair never overwrites custom art' {
@@ -561,13 +587,31 @@ try {
         $results = @(Repair-CloudCartridgeMissingThumbnails -PlaylistItems $items -ThumbnailDirectory $thumbRoot -Apply -Fetcher {
             param($item, $target)
             $fetchCounter.Value++
-            [System.IO.File]::WriteAllBytes($target, [byte[]](1, 2, 3))
+            [System.IO.File]::WriteAllBytes($target, [byte[]](137, 80, 78, 71, 13, 10, 26, 10, 0))
             return $true
         })
         Assert-True (($results | Where-Object label -eq 'Custom Game').decision -eq 'preserved_existing') 'Arte customizada nao foi preservada.'
         Assert-True (([System.IO.File]::ReadAllBytes($custom) -join ',') -eq '9,9,9') 'Arte customizada foi sobrescrita.'
         Assert-True (($results | Where-Object label -eq 'Missing Game').decision -eq 'downloaded') 'Thumbnail ausente nao foi reparada.'
         Assert-True ($fetchCounter.Value -eq 1) 'Fetcher foi chamado para arte existente.'
+    }
+
+    Invoke-Test 'Official thumbnail downloader validates origin and PNG' {
+        $downloadRoot = Join-Path $tempRoot 'thumbnail-download'
+        $target = Join-Path $downloadRoot 'Game.png'
+        $rejectedOrigin = $false
+        try { Invoke-CloudCartridgeThumbnailDownload -Url 'https://example.com/Game.png' -TargetPath $target -WebRequestAction { } | Out-Null } catch { $rejectedOrigin = $true }
+        Assert-True $rejectedOrigin 'Downloader aceitou host nao oficial.'
+        $invalid = $false
+        try {
+            Invoke-CloudCartridgeThumbnailDownload -Url 'https://thumbnails.libretro.com/System/Named_Boxarts/Game.png' -TargetPath $target -WebRequestAction { param($url, $path) [System.IO.File]::WriteAllBytes($path, [byte[]](1, 2, 3)) } | Out-Null
+        } catch { $invalid = $true }
+        Assert-True ($invalid -and -not (Test-Path -LiteralPath $target)) 'Arquivo invalido foi promovido como PNG.'
+        $downloaded = Invoke-CloudCartridgeThumbnailDownload -Url 'https://thumbnails.libretro.com/System/Named_Boxarts/Game.png' -TargetPath $target -WebRequestAction { param($url, $path) [System.IO.File]::WriteAllBytes($path, [byte[]](137, 80, 78, 71, 13, 10, 26, 10, 1)) }
+        Assert-True ($downloaded.status -eq 'downloaded' -and (Test-Path -LiteralPath $target)) 'PNG oficial valida nao foi promovida.'
+        $before = [System.IO.File]::ReadAllBytes($target) -join ','
+        $preserved = Invoke-CloudCartridgeThumbnailDownload -Url 'https://thumbnails.libretro.com/System/Named_Boxarts/Game.png' -TargetPath $target -WebRequestAction { throw 'Nao deveria baixar novamente.' }
+        Assert-True ($preserved.status -eq 'preserved_existing' -and ([System.IO.File]::ReadAllBytes($target) -join ',') -eq $before) 'Downloader sobrescreveu thumbnail existente.'
     }
 
     Invoke-Test 'Publish script has no force push' {
