@@ -1,6 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+Add-Type -AssemblyName System.Security
 Import-Module (Join-Path $PSScriptRoot 'CloudCartridge.Core.psm1')
 
 function New-CloudCartridgeRandomSecret {
@@ -25,12 +26,91 @@ function Get-CloudCartridgeRecoveryVerifier {
 
 function Read-CloudCartridgeHostDatabase {
     param([string]$DatabasePath)
-    if (-not (Test-Path -LiteralPath $DatabasePath -PathType Leaf)) { return [PSCustomObject]@{ schema_version = 1; profiles = @() } }
+    if (-not (Test-Path -LiteralPath $DatabasePath -PathType Leaf)) { return [PSCustomObject]@{ schema_version = 1; profiles = @(); invites = @() } }
     try {
         $database = Get-Content -LiteralPath $DatabasePath -Raw -Encoding UTF8 | ConvertFrom-Json
         if (-not $database.PSObject.Properties['profiles']) { throw 'Campo profiles ausente.' }
+        if (-not $database.PSObject.Properties['invites']) { $database | Add-Member NoteProperty invites @() }
         return $database
     } catch { throw "Banco do Host invalido: $($_.Exception.Message)" }
+}
+
+function New-CloudCartridgeHostInvite {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$DatabasePath,
+        [Parameter(Mandatory = $true)][string]$DisplayName,
+        [string]$ProfileCode,
+        [ValidateRange(1, 10080)][int]$ExpiresInMinutes = 60
+    )
+    $database = Read-CloudCartridgeHostDatabase -DatabasePath $DatabasePath
+    $activeCount = @($database.profiles | Where-Object { $_.active }).Count
+    $pendingCount = @($database.invites | Where-Object {
+        -not $_.used_utc -and [DateTimeOffset]::Parse([string]$_.expires_utc).UtcDateTime -gt [DateTime]::UtcNow
+    }).Count
+    if ($activeCount + $pendingCount -ge 5) { throw 'Nao ha vaga disponivel para novo convite.' }
+    if (-not $ProfileCode) { $ProfileCode = (New-CloudCartridgeRandomSecret -Bytes 8).ToUpperInvariant() -replace '[^A-Z0-9]', ''; $ProfileCode = $ProfileCode.PadRight(8, 'X').Substring(0, 8) }
+    $ProfileCode = $ProfileCode.ToUpperInvariant()
+    if ($ProfileCode -notmatch '^[A-Z0-9]{8}$') { throw 'profile_code deve conter exatamente 8 caracteres A-Z/0-9.' }
+    if (@($database.profiles | Where-Object { $_.profile_code -ieq $ProfileCode }).Count -gt 0 -or @($database.invites | Where-Object { $_.profile_code -ieq $ProfileCode -and -not $_.used_utc }).Count -gt 0) { throw 'profile_code ja utilizado.' }
+    $token = New-CloudCartridgeRandomSecret -Bytes 32
+    $invite = [PSCustomObject][ordered]@{
+        invite_id = [Guid]::NewGuid().ToString('D'); token_hash = Get-CloudCartridgeSha256Text $token
+        display_name = $DisplayName; profile_code = $ProfileCode; created_utc = [DateTime]::UtcNow.ToString('o')
+        expires_utc = [DateTime]::UtcNow.AddMinutes($ExpiresInMinutes).ToString('o'); used_utc = $null; profile_id = $null
+    }
+    $database.invites = @($database.invites) + $invite
+    Write-CloudCartridgeJsonAtomic -InputObject $database -Path $DatabasePath -Depth 10
+    return [PSCustomObject]@{ invite_id = $invite.invite_id; invite_token = $token; display_name = $DisplayName; profile_code = $ProfileCode; expires_utc = $invite.expires_utc }
+}
+
+function Use-CloudCartridgeHostInvite {
+    [CmdletBinding()]
+    param([string]$DatabasePath, [string]$DataRoot, [string]$InviteToken)
+    if (-not $InviteToken) { throw 'Convite invalido ou expirado.' }
+    $database = Read-CloudCartridgeHostDatabase -DatabasePath $DatabasePath
+    $tokenHash = Get-CloudCartridgeSha256Text $InviteToken
+    $invite = @($database.invites | Where-Object { $_.token_hash -eq $tokenHash -and -not $_.used_utc } | Select-Object -First 1)
+    if ($invite.Count -eq 0) { throw 'Convite invalido, usado ou desconhecido.' }
+    $expiresUtc = [DateTimeOffset]::Parse([string]$invite[0].expires_utc).UtcDateTime
+    if ($expiresUtc -le [DateTime]::UtcNow) { throw 'Convite expirado.' }
+    $profile = New-CloudCartridgeHostProfile -DatabasePath $DatabasePath -DataRoot $DataRoot -DisplayName $invite[0].display_name -ProfileCode $invite[0].profile_code
+    $database = Read-CloudCartridgeHostDatabase -DatabasePath $DatabasePath
+    $storedInvite = @($database.invites | Where-Object { $_.invite_id -eq $invite[0].invite_id } | Select-Object -First 1)
+    $storedInvite[0].used_utc = [DateTime]::UtcNow.ToString('o')
+    $storedInvite[0].profile_id = $profile.profile_id
+    Write-CloudCartridgeJsonAtomic -InputObject $database -Path $DatabasePath -Depth 10
+    return $profile
+}
+
+function Save-CloudCartridgeClientCredential {
+    [CmdletBinding()]
+    param([string]$CredentialPath, [string]$ProfileId, [string]$ProfileCode, [string]$DeviceToken, [string]$RecoveryKey, [scriptblock]$ProtectAction)
+    if (-not $ProfileId -or -not $DeviceToken -or -not $RecoveryKey) { throw 'Credencial incompleta.' }
+    $entropy = [System.Text.Encoding]::UTF8.GetBytes('CloudCartridge-v1')
+    $protect = {
+        param($value)
+        if ($ProtectAction) { return [string](& $ProtectAction $value) }
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($value)
+        [Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Protect($bytes, $entropy, [System.Security.Cryptography.DataProtectionScope]::CurrentUser))
+    }
+    $record = [PSCustomObject]@{ schema_version = 1; profile_id = $ProfileId; profile_code = $ProfileCode; device_token_dpapi = (& $protect $DeviceToken); recovery_key_dpapi = (& $protect $RecoveryKey) }
+    Write-CloudCartridgeJsonAtomic -InputObject $record -Path $CredentialPath -Depth 5
+    return [PSCustomObject]@{ saved = $true; path = $CredentialPath; profile_id = $ProfileId }
+}
+
+function Get-CloudCartridgeClientCredential {
+    [CmdletBinding()]
+    param([string]$CredentialPath, [scriptblock]$UnprotectAction)
+    $record = Get-Content -LiteralPath $CredentialPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $entropy = [System.Text.Encoding]::UTF8.GetBytes('CloudCartridge-v1')
+    $unprotect = {
+        param($value)
+        if ($UnprotectAction) { return [string](& $UnprotectAction $value) }
+        $plain = [System.Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($value), $entropy, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+        [System.Text.Encoding]::UTF8.GetString($plain)
+    }
+    return [PSCustomObject]@{ profile_id = $record.profile_id; profile_code = $record.profile_code; device_token = (& $unprotect $record.device_token_dpapi); recovery_key = (& $unprotect $record.recovery_key_dpapi) }
 }
 
 function New-CloudCartridgeHostProfile {
@@ -119,4 +199,4 @@ function Revoke-CloudCartridgeHostProfile {
     return $profile[0]
 }
 
-Export-ModuleMember -Function @('New-CloudCartridgeHostProfile', 'Test-CloudCartridgeHostDeviceCredential', 'New-CloudCartridgeRecoveredDevice', 'Get-CloudCartridgeAuthorizedSavePath', 'Revoke-CloudCartridgeHostProfile')
+Export-ModuleMember -Function @('New-CloudCartridgeHostInvite', 'Use-CloudCartridgeHostInvite', 'New-CloudCartridgeHostProfile', 'Test-CloudCartridgeHostDeviceCredential', 'New-CloudCartridgeRecoveredDevice', 'Get-CloudCartridgeAuthorizedSavePath', 'Revoke-CloudCartridgeHostProfile', 'Save-CloudCartridgeClientCredential', 'Get-CloudCartridgeClientCredential')

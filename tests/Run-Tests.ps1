@@ -648,6 +648,46 @@ try {
         Assert-True ($replacement.profile_id -ne $profiles[0].profile_id) 'Novo slot reutilizou UUID revogado.'
     }
 
+    Invoke-Test 'Host invite is single-use and client secrets use DPAPI' {
+        $hostRoot = Join-Path $tempRoot 'invite-host'
+        $databasePath = Join-Path $hostRoot 'admin\users.json'
+        $invite = New-CloudCartridgeHostInvite -DatabasePath $databasePath -DisplayName 'Invited User' -ProfileCode 'INVITE01'
+        $databaseText = Get-Content -LiteralPath $databasePath -Raw -Encoding UTF8
+        Assert-True (-not $databaseText.Contains($invite.invite_token)) 'Token de convite foi persistido em texto puro.'
+        $noTokenDenied = $false
+        try { Use-CloudCartridgeHostInvite -DatabasePath $databasePath -DataRoot $hostRoot -InviteToken '' | Out-Null } catch { $noTokenDenied = $true }
+        Assert-True $noTokenDenied 'Instalador sem token criou perfil.'
+        $profile = Use-CloudCartridgeHostInvite -DatabasePath $databasePath -DataRoot $hostRoot -InviteToken $invite.invite_token
+        $reuseDenied = $false
+        try { Use-CloudCartridgeHostInvite -DatabasePath $databasePath -DataRoot $hostRoot -InviteToken $invite.invite_token | Out-Null } catch { $reuseDenied = $true }
+        Assert-True $reuseDenied 'Convite foi reutilizado.'
+        $dpapiPath = Join-Path $tempRoot 'client-dpapi.json'
+        $dpapiWorked = $true
+        try { Save-CloudCartridgeClientCredential -CredentialPath $dpapiPath -ProfileId $profile.profile_id -ProfileCode $profile.profile_code -DeviceToken $profile.device_token -RecoveryKey $profile.recovery_key | Out-Null } catch { $dpapiWorked = $false }
+        if ($dpapiWorked) {
+            $dpapiLoaded = Get-CloudCartridgeClientCredential -CredentialPath $dpapiPath
+            Assert-True ($dpapiLoaded.device_token -eq $profile.device_token) 'DPAPI real nao fez roundtrip.'
+        } else {
+            Assert-True (-not (Test-Path -LiteralPath $dpapiPath)) 'Falha de DPAPI deixou arquivo parcial.'
+        }
+        $credentialPath = Join-Path $tempRoot 'client-credential.json'
+        $testProtect = { param($value) 'fixture:' + [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($value)) }
+        $testUnprotect = { param($value) [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($value.Substring(8))) }
+        $saved = Save-CloudCartridgeClientCredential -CredentialPath $credentialPath -ProfileId $profile.profile_id -ProfileCode $profile.profile_code -DeviceToken $profile.device_token -RecoveryKey $profile.recovery_key -ProtectAction $testProtect
+        Assert-True $saved.saved 'Credencial local nao foi salva.'
+        $credentialText = Get-Content -LiteralPath $credentialPath -Raw -Encoding UTF8
+        Assert-True (-not $credentialText.Contains($profile.device_token) -and -not $credentialText.Contains($profile.recovery_key)) 'DPAPI deixou segredo em texto puro.'
+        $loaded = Get-CloudCartridgeClientCredential -CredentialPath $credentialPath -UnprotectAction $testUnprotect
+        Assert-True ($loaded.device_token -eq $profile.device_token -and $loaded.recovery_key -eq $profile.recovery_key) 'DPAPI nao recuperou credenciais do usuario atual.'
+
+        $pendingRoot = Join-Path $tempRoot 'pending-invites'
+        $pendingDb = Join-Path $pendingRoot 'users.json'
+        for ($index = 1; $index -le 5; $index++) { $null = New-CloudCartridgeHostInvite -DatabasePath $pendingDb -DisplayName "Pending $index" -ProfileCode ("PND{0:D5}" -f $index) }
+        $pendingSixthDenied = $false
+        try { New-CloudCartridgeHostInvite -DatabasePath $pendingDb -DisplayName 'Pending 6' -ProfileCode 'PND00006' | Out-Null } catch { $pendingSixthDenied = $true }
+        Assert-True $pendingSixthDenied 'Convites pendentes excederam cinco vagas.'
+    }
+
     Invoke-Test 'Publish script has no force push' {
         $publishText = Get-Content -LiteralPath (Join-Path $repoRoot 'Publicar_no_GitHub.cmd') -Raw
         Assert-True ($publishText -notmatch 'push[^\r\n]*--force') 'Force push ainda presente.'

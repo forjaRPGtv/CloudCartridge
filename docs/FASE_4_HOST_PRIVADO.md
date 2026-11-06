@@ -10,15 +10,19 @@
 - Cada perfil recebe árvore privada por UUID para RetroArch, standalone, MiSTer e versões.
 - Resolução de caminhos exige credencial válida e rejeita traversal para outro perfil.
 - Revogação invalida dispositivos e preserva integralmente a pasta de saves.
+- Convites individuais expiram, reservam uma das cinco vagas, armazenam somente hash do token e são de uso único.
+- Credenciais do cliente usam DPAPI `CurrentUser`; se o perfil criptográfico não estiver carregado, a gravação aborta sem fallback em texto puro.
 
 ## Evidência
 
-A suíte completa está em **35 testes aprovados, 0 falhas**. O teste do Host comprova: convidado 6 negado, segredos ausentes do banco em texto puro, token A recusado no perfil B, traversal bloqueado, recovery incorreto negado, novo dispositivo recuperado e saves preservados após revogação.
+A suíte completa está em **36 testes aprovados, 0 falhas**. Além do isolamento, os testes comprovam convite sem token negado, uso único, token ausente do banco em texto puro e limite de cinco convites pendentes.
+
+O runner automatizado não possui perfil DPAPI interativo carregado; nesse contexto a implementação foi confirmada como *fail-closed*, sem criar arquivo parcial. O roundtrip do contrato de proteção foi validado com provedor injetado de fixture. A validação DPAPI real permanece pendente em sessão Windows interativa.
 
 ## Próximos pontos
 
-- Convites com expiração/uso único e confirmação explícita da recovery key.
-- Armazenamento local do cliente via DPAPI/Credential Manager.
+- Confirmação interativa obrigatória da recovery key no onboarding.
+- Smoke DPAPI real em sessão Windows interativa.
 - Gateway LAN autenticado, sem bind público por padrão.
 - Rate limiting, anti-replay, auditoria redigida e monitor TUI.
 - Teste de rede LAN e documentação opcional para Tailscale/WireGuard.
