@@ -62,11 +62,37 @@ try {
         Assert-True $rejected 'Configuracao invalida foi aceita.'
     }
 
+    Invoke-Test 'Cache policy supports preview, apply and off' {
+        $policyPath = Join-Path $tempRoot 'policy\config.json'
+        $preview = Update-CloudCartridgeConfig -ConfigPath $policyPath -Values @{ retention_days = 14; cleanup_enabled = $true } -DryRun
+        Assert-True ($preview.retention_days -eq 14 -and $preview.cleanup_enabled) 'Preview de 14 dias incorreto.'
+        Assert-True (-not (Test-Path -LiteralPath $policyPath)) 'Dry-run gravou config.json.'
+
+        $disabled = Update-CloudCartridgeConfig -ConfigPath $policyPath -Values @{ retention_days = $null; cleanup_enabled = $false }
+        Assert-True ($null -eq $disabled.retention_days -and -not $disabled.cleanup_enabled) 'Politica off incorreta.'
+        Assert-True (Test-Path -LiteralPath $policyPath -PathType Leaf) 'Aplicacao nao criou config.json.'
+
+        $enabled = Update-CloudCartridgeConfig -ConfigPath $policyPath -Values @{ retention_days = 7; cleanup_enabled = $true }
+        Assert-True ($enabled.retention_days -eq 7 -and $enabled.cleanup_enabled) 'Reativacao em 7 dias incorreta.'
+    }
+
     Invoke-Test 'Managed path guard rejects traversal and prefix collision' {
         $root = Join-Path $tempRoot 'cache'
         Assert-True (Test-CloudCartridgePathWithinRoot -Path (Join-Path $root 'Console\Game.chd') -Root $root) 'Caminho interno rejeitado.'
         Assert-True (-not (Test-CloudCartridgePathWithinRoot -Path (Join-Path $tempRoot 'cache-evil\Game.chd') -Root $root)) 'Colisao de prefixo aceita.'
         Assert-True (-not (Test-CloudCartridgePathWithinRoot -Path (Join-Path $root '..\outside.chd') -Root $root)) 'Traversal aceito.'
+    }
+
+    Invoke-Test 'Portable emulator detection refreshes without installing' {
+        $portablePath = Join-Path $tempRoot 'portable\retroarch.exe'
+        $missing = Find-CloudCartridgeExecutable -CandidatePaths @($portablePath)
+        Assert-True ($missing.state -eq 'not_installed' -and $null -eq $missing.path) 'Ausencia foi detectada incorretamente.'
+        Assert-True (-not (Test-Path -LiteralPath $portablePath)) 'Detector instalou ou criou executavel.'
+
+        New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($portablePath)) -Force | Out-Null
+        [System.IO.File]::WriteAllBytes($portablePath, [byte[]](77, 90, 0, 0))
+        $detected = Find-CloudCartridgeExecutable -CandidatePaths @($portablePath)
+        Assert-True ($detected.state -eq 'detected' -and $detected.path -eq [System.IO.Path]::GetFullPath($portablePath)) 'Executavel portatil nao foi detectado apos refresh.'
     }
 
     Invoke-Test 'Atomic JSON write leaves no partial residue' {
@@ -76,6 +102,165 @@ try {
         Assert-True ($loaded.ok -eq $true -and $loaded.count -eq 2) 'JSON atomico invalido.'
         $jsonDirectory = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($jsonPath))
         Assert-True (@(Get-ChildItem -LiteralPath $jsonDirectory -Filter '*.partial.*').Count -eq 0) 'Residuo partial encontrado.'
+    }
+
+    Invoke-Test 'Cache pin previews and applies only inside managed root' {
+        $cacheRoot = Join-Path $tempRoot 'pin-cache'
+        $gamePath = Join-Path $cacheRoot 'Console\Game.chd'
+        $registryPath = Join-Path $cacheRoot '.cache_registry.json'
+        $games = [PSCustomObject]@{}
+        $games | Add-Member -MemberType NoteProperty -Name $gamePath -Value ([PSCustomObject]@{ catalog_id = 'game-001'; is_pinned = $false; status = 'local_cached' })
+        Write-CloudCartridgeJsonAtomic -InputObject ([PSCustomObject]@{ retention_days = 3; games = $games }) -Path $registryPath
+
+        $preview = Set-CloudCartridgeCachePin -RegistryPath $registryPath -ManagedRoot $cacheRoot -Identifier 'game-001' -Pinned $true -DryRun
+        Assert-True (-not $preview.applied -and $preview.pinned) 'Preview de pin incorreto.'
+        $afterPreview = Get-Content -LiteralPath $registryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True (-not [bool]$afterPreview.games.$gamePath.is_pinned) 'Preview alterou o registro.'
+
+        $applied = Set-CloudCartridgeCachePin -RegistryPath $registryPath -ManagedRoot $cacheRoot -Identifier $gamePath -Pinned $true
+        Assert-True ($applied.applied) 'Pin nao foi aplicado.'
+        $afterApply = Get-Content -LiteralPath $registryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ([bool]$afterApply.games.$gamePath.is_pinned) 'Registro nao persistiu pin.'
+
+        $outsideGames = [PSCustomObject]@{}
+        $outsidePath = Join-Path $tempRoot 'outside\Game.chd'
+        $outsideGames | Add-Member -MemberType NoteProperty -Name $outsidePath -Value ([PSCustomObject]@{ catalog_id = 'outside-001'; is_pinned = $false })
+        Write-CloudCartridgeJsonAtomic -InputObject ([PSCustomObject]@{ games = $outsideGames }) -Path $registryPath
+        $rejected = $false
+        try { Set-CloudCartridgeCachePin -RegistryPath $registryPath -ManagedRoot $cacheRoot -Identifier 'outside-001' -Pinned $true | Out-Null } catch { $rejected = $true }
+        Assert-True $rejected 'Pin fora da raiz gerenciada foi aceito.'
+    }
+
+    Invoke-Test 'Cache cleanup preserves recent, pinned and unsafe entries' {
+        $cleanupRoot = Join-Path $tempRoot 'cleanup-cache'
+        $cleanupRegistry = Join-Path $cleanupRoot '.cache_registry.json'
+        $now = [DateTime]::UtcNow
+        $recentPath = Join-Path $cleanupRoot 'Console\Recent.chd'
+        $expiredPath = Join-Path $cleanupRoot 'Console\Expired.chd'
+        $pinnedPath = Join-Path $cleanupRoot 'Console\Pinned.chd'
+        $protectedPath = Join-Path $cleanupRoot '_RA_SAVES\Save.srm'
+        $outsidePath = Join-Path $tempRoot 'outside-cache\Outside.chd'
+        foreach ($path in @($recentPath, $expiredPath, $pinnedPath, $protectedPath, $outsidePath)) {
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($path)) -Force | Out-Null
+            [System.IO.File]::WriteAllBytes($path, [byte[]](1, 2, 3))
+        }
+        $games = [PSCustomObject]@{}
+        $games | Add-Member NoteProperty $recentPath ([PSCustomObject]@{ title = 'Recent'; last_played = $now.AddDays(-1).ToString('o'); status = 'local_cached'; is_pinned = $false })
+        $games | Add-Member NoteProperty $expiredPath ([PSCustomObject]@{ title = 'Expired'; last_played = $now.AddDays(-5).ToString('o'); status = 'local_cached'; is_pinned = $false })
+        $games | Add-Member NoteProperty $pinnedPath ([PSCustomObject]@{ title = 'Pinned'; last_played = $now.AddDays(-20).ToString('o'); status = 'local_cached'; is_pinned = $true })
+        $games | Add-Member NoteProperty $protectedPath ([PSCustomObject]@{ title = 'Save'; last_played = $now.AddDays(-20).ToString('o'); status = 'local_cached'; is_pinned = $false })
+        $games | Add-Member NoteProperty $outsidePath ([PSCustomObject]@{ title = 'Outside'; last_played = $now.AddDays(-20).ToString('o'); status = 'local_cached'; is_pinned = $false })
+        Write-CloudCartridgeJsonAtomic -InputObject ([PSCustomObject]@{ games = $games }) -Path $cleanupRegistry
+
+        $preview = @(Invoke-CloudCartridgeCacheCleanup -RegistryPath $cleanupRegistry -ManagedRoot $cleanupRoot -RetentionDays 3 -CleanupEnabled $true -DryRun)
+        Assert-True (($preview | Where-Object path -eq $expiredPath).decision -eq 'dehydrate') 'Expirado nao entrou no plano.'
+        Assert-True (($preview | Where-Object path -eq $recentPath).reason -eq 'not_expired') 'Recente seria removido.'
+        Assert-True (($preview | Where-Object path -eq $pinnedPath).reason -eq 'pinned') 'Fixado seria removido.'
+        Assert-True (($preview | Where-Object path -eq $protectedPath).reason -eq 'outside_managed_cache') 'Save protegido seria removido.'
+        Assert-True (($preview | Where-Object path -eq $outsidePath).reason -eq 'outside_managed_cache') 'Arquivo externo seria removido.'
+
+        $applied = @(Invoke-CloudCartridgeCacheCleanup -RegistryPath $cleanupRegistry -ManagedRoot $cleanupRoot -RetentionDays 3 -CleanupEnabled $true -DehydrateAction { param($path) return $path -eq $expiredPath })
+        Assert-True (($applied | Where-Object path -eq $expiredPath).decision -eq 'dehydrated') 'Expirado nao foi desidratado.'
+        $after = Get-Content -LiteralPath $cleanupRegistry -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ($after.games.$expiredPath.status -eq 'cloud_only') 'Registro nao confirmou desidratacao.'
+        Assert-True ($after.games.$recentPath.status -eq 'local_cached') 'Recente mudou de estado.'
+
+        $after.games.$expiredPath.status = 'local_cached'
+        Write-CloudCartridgeJsonAtomic -InputObject $after -Path $cleanupRegistry
+        $failed = @(Invoke-CloudCartridgeCacheCleanup -RegistryPath $cleanupRegistry -ManagedRoot $cleanupRoot -RetentionDays 3 -CleanupEnabled $true -DehydrateAction { return $false })
+        Assert-True (($failed | Where-Object path -eq $expiredPath).decision -eq 'failed') 'Falha de desidratacao nao foi reportada.'
+        $afterFailure = Get-Content -LiteralPath $cleanupRegistry -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ($afterFailure.games.$expiredPath.status -eq 'local_cached') 'Falha marcou cache como removido.'
+    }
+
+    Invoke-Test 'CLI cache cleanup previews without changing registry' {
+        $cliRoot = Join-Path $tempRoot 'cleanup-cli'
+        $cliLibrary = Join-Path $cliRoot 'library'
+        $cliGame = Join-Path $cliLibrary 'Console\Expired.chd'
+        $cliRegistry = Join-Path $cliLibrary '.cache_registry.json'
+        New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($cliGame)) -Force | Out-Null
+        [System.IO.File]::WriteAllBytes($cliGame, [byte[]](1, 2, 3))
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Core.psm1') -Destination $cliRoot
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.ps1') -Destination $cliRoot
+        Write-CloudCartridgeJsonAtomic -InputObject ([PSCustomObject]@{
+            local_roms_path = $cliLibrary
+            retention_days = 3
+            cleanup_enabled = $true
+        }) -Path (Join-Path $cliRoot 'config.json')
+        $games = [PSCustomObject]@{}
+        $games | Add-Member NoteProperty $cliGame ([PSCustomObject]@{
+            title = 'Expired'
+            last_played = ([DateTime]::UtcNow.AddDays(-5).ToString('o'))
+            status = 'local_cached'
+            is_pinned = $false
+        })
+        Write-CloudCartridgeJsonAtomic -InputObject ([PSCustomObject]@{ games = $games }) -Path $cliRegistry
+
+        $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $cliRoot 'CloudCartridge.ps1') cache cleanup --json 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "CLI cleanup falhou: $($output -join ' ')"
+        $result = ($output -join "`n") | ConvertFrom-Json
+        Assert-True ($result.dry_run -and -not $result.applied -and $result.candidates -eq 1) 'CLI nao apresentou a limpeza esperada.'
+        $afterPreview = Get-Content -LiteralPath $cliRegistry -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ($afterPreview.games.$cliGame.status -eq 'local_cached') 'CLI em preview alterou o registro.'
+    }
+
+    Invoke-Test 'Download journal deduplicates and orders priorities' {
+        $downloadRoot = Join-Path $tempRoot 'download-cache'
+        $journalPath = Join-Path $downloadRoot '.download_jobs.json'
+        $gameA = Join-Path $downloadRoot 'Console\Game A.chd'
+        $gameB = Join-Path $downloadRoot 'Console\Game B.chd'
+        $gameC = Join-Path $downloadRoot 'Console\Game C.chd'
+
+        $first = Register-CloudCartridgeDownloadJob -JournalPath $journalPath -ManagedRoot $downloadRoot -FilePath $gameA -CatalogId 'game-a' -Priority prefetch
+        $duplicate = Register-CloudCartridgeDownloadJob -JournalPath $journalPath -ManagedRoot $downloadRoot -FilePath $gameA -CatalogId 'game-a' -Priority current
+        Assert-True (-not $first.deduplicated -and $duplicate.deduplicated) 'Job duplicado nao foi deduplicado.'
+        Assert-True ($first.job.job_id -eq $duplicate.job.job_id) 'Deduplicacao criou outro job.'
+
+        $null = Register-CloudCartridgeDownloadJob -JournalPath $journalPath -ManagedRoot $downloadRoot -FilePath $gameB -CatalogId 'game-b' -Priority current
+        $null = Register-CloudCartridgeDownloadJob -JournalPath $journalPath -ManagedRoot $downloadRoot -FilePath $gameC -CatalogId 'game-c' -Priority resume
+        $jobs = @(Get-CloudCartridgeDownloadJobs -JournalPath $journalPath)
+        Assert-True ($jobs.Count -eq 3) 'Quantidade de jobs incorreta.'
+        Assert-True ($jobs[0].catalog_id -eq 'game-b' -and $jobs[1].catalog_id -eq 'game-c' -and $jobs[2].catalog_id -eq 'game-a') 'Prioridades em ordem incorreta.'
+
+        $completed = Set-CloudCartridgeDownloadJobState -JournalPath $journalPath -JobId $first.job.job_id -State completed -BytesDownloaded 10 -TotalBytes 10
+        Assert-True ($completed.state -eq 'completed' -and $completed.bytes_downloaded -eq 10) 'Estado do job nao persistiu.'
+        $replacement = Register-CloudCartridgeDownloadJob -JournalPath $journalPath -ManagedRoot $downloadRoot -FilePath $gameA -CatalogId 'game-a' -Priority current
+        Assert-True (-not $replacement.deduplicated -and $replacement.job.job_id -ne $first.job.job_id) 'Job concluido bloqueou nova solicitacao.'
+
+        $schedulePath = Join-Path $downloadRoot '.schedule_jobs.json'
+        $low = Register-CloudCartridgeDownloadJob -JournalPath $schedulePath -ManagedRoot $downloadRoot -FilePath $gameA -CatalogId 'low' -Priority prefetch
+        $high = Register-CloudCartridgeDownloadJob -JournalPath $schedulePath -ManagedRoot $downloadRoot -FilePath $gameB -CatalogId 'high' -Priority current
+        Assert-True (-not (Enter-CloudCartridgeDownloadJob -JournalPath $schedulePath -JobId $low.job.job_id -MaxConcurrent 1)) 'Prefetch furou a prioridade.'
+        Assert-True (Enter-CloudCartridgeDownloadJob -JournalPath $schedulePath -JobId $high.job.job_id -MaxConcurrent 1) 'Job atual nao obteve slot.'
+        $null = Set-CloudCartridgeDownloadJobState -JournalPath $schedulePath -JobId $high.job.job_id -State completed
+        Assert-True (Enter-CloudCartridgeDownloadJob -JournalPath $schedulePath -JobId $low.job.job_id -MaxConcurrent 1) 'Prefetch nao obteve slot liberado.'
+    }
+
+    Invoke-Test 'Concurrent requests create only one download job' {
+        $parallelRoot = Join-Path $tempRoot 'parallel-cache'
+        $parallelJournal = Join-Path $parallelRoot '.download_jobs.json'
+        $parallelGame = Join-Path $parallelRoot 'Console\Parallel Game.chd'
+        $gatePath = Join-Path $parallelRoot 'start.gate'
+        New-Item -ItemType Directory -Path $parallelRoot -Force | Out-Null
+        $worker = {
+            param($ModulePath, $JournalPath, $ManagedRoot, $FilePath, $GatePath)
+            Import-Module $ModulePath -Force
+            while (-not (Test-Path -LiteralPath $GatePath)) { Start-Sleep -Milliseconds 20 }
+            Register-CloudCartridgeDownloadJob -JournalPath $JournalPath -ManagedRoot $ManagedRoot -FilePath $FilePath -CatalogId 'parallel-game' -Priority current
+        }
+        $jobOne = Start-Job -ScriptBlock $worker -ArgumentList (Join-Path $repoRoot 'CloudCartridge.Core.psm1'), $parallelJournal, $parallelRoot, $parallelGame, $gatePath
+        $jobTwo = Start-Job -ScriptBlock $worker -ArgumentList (Join-Path $repoRoot 'CloudCartridge.Core.psm1'), $parallelJournal, $parallelRoot, $parallelGame, $gatePath
+        try {
+            [System.IO.File]::WriteAllText($gatePath, 'go', [System.Text.Encoding]::ASCII)
+            $null = Wait-Job -Job @($jobOne, $jobTwo) -Timeout 15
+            Assert-True ($jobOne.State -eq 'Completed' -and $jobTwo.State -eq 'Completed') 'Workers paralelos nao terminaram.'
+            $results = @((Receive-Job $jobOne), (Receive-Job $jobTwo))
+            Assert-True (@($results | Where-Object { $_.deduplicated }).Count -eq 1) 'Deduplicacao paralela nao elegeu um unico job.'
+            Assert-True (@($results | Where-Object { -not $_.deduplicated }).Count -eq 1) 'Quantidade de criadores do job incorreta.'
+            Assert-True (@(Get-CloudCartridgeDownloadJobs -JournalPath $parallelJournal).Count -eq 1) 'Journal paralelo contem jobs duplicados.'
+        } finally {
+            Remove-Job -Job @($jobOne, $jobTwo) -Force -ErrorAction SilentlyContinue
+        }
     }
 
     Invoke-Test 'Save sync creates, deduplicates and versions conflicts' {

@@ -9,7 +9,8 @@ $scriptDir = $PSScriptRoot
 Import-Module (Join-Path $scriptDir 'CloudCartridge.Core.psm1') -Force
 
 $jsonOutput = $Arguments -contains '--json'
-$filteredArguments = @($Arguments | Where-Object { $_ -ne '--json' -and $_ -ne '--refresh' -and $_ -ne '--available' })
+$confirmed = $Arguments -contains '--yes'
+$filteredArguments = @($Arguments | Where-Object { $_ -notin @('--json', '--refresh', '--available', '--dry-run', '--yes') })
 $configPath = Join-Path $scriptDir 'config.json'
 $config = Get-CloudCartridgeConfig -ConfigPath $configPath
 
@@ -37,6 +38,19 @@ function Get-CacheSummary {
         }
     }
     return [PSCustomObject]$summary
+}
+
+function Get-DownloadSummary {
+    $journalPath = Join-Path $config.local_roms_path '.download_jobs.json'
+    $jobs = @(Get-CloudCartridgeDownloadJobs -JournalPath $journalPath)
+    return [PSCustomObject][ordered]@{
+        journal_path = $journalPath
+        queued = @($jobs | Where-Object { $_.state -eq 'queued' }).Count
+        active = @($jobs | Where-Object { $_.state -eq 'active' }).Count
+        completed = @($jobs | Where-Object { $_.state -eq 'completed' }).Count
+        failed = @($jobs | Where-Object { $_.state -eq 'failed' }).Count
+        jobs = $jobs
+    }
 }
 
 function Get-CoreInventory {
@@ -84,10 +98,17 @@ function Get-DoctorReport {
     $cores = @(Get-CoreInventory)
     $emulators = @(Get-EmulatorInventory)
     $cache = Get-CacheSummary
+    $downloads = Get-DownloadSummary
     $issues = @()
     if (-not (Test-Path -LiteralPath $config.local_roms_path -PathType Container)) { $issues += 'library_root_missing' }
     if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { $issues += 'config_missing_using_defaults' }
-    if (-not (Test-Path -LiteralPath $config.retroarch_path -PathType Leaf)) { $issues += 'retroarch_missing' }
+    $retroArchDetection = Find-CloudCartridgeExecutable -CandidatePaths @(
+        $config.retroarch_path,
+        (Join-Path $scriptDir 'RetroArch\retroarch.exe'),
+        (Join-Path (Split-Path $scriptDir -Parent) 'RetroArch\retroarch.exe'),
+        'C:\RetroArch-Win64\retroarch.exe'
+    ) -CommandNames @('retroarch.exe')
+    if ($retroArchDetection.state -ne 'detected') { $issues += 'retroarch_missing' }
     if ($config.enable_cloud_save_sync -and [string]::IsNullOrWhiteSpace([string]$config.google_drive_roms_path)) { $issues += 'cloud_save_destination_unconfigured' }
     if ($cache.error) { $issues += 'cache_registry_invalid' }
     if (@($cores | Where-Object { $_.state -eq 'not_installed' }).Count -gt 0) { $issues += 'mapped_cores_missing' }
@@ -109,9 +130,11 @@ function Get-DoctorReport {
             exists = Test-Path -LiteralPath $config.local_roms_path -PathType Container
         }
         retroarch = [PSCustomObject]@{
-            path = $config.retroarch_path
-            version = if (Test-Path -LiteralPath $config.retroarch_path -PathType Leaf) { (Get-Item -LiteralPath $config.retroarch_path).VersionInfo.FileVersion } else { $null }
-            state = if (Test-Path -LiteralPath $config.retroarch_path -PathType Leaf) { 'detected' } else { 'not_installed' }
+            configured_path = $config.retroarch_path
+            path = $retroArchDetection.path
+            source = $retroArchDetection.source
+            version = if ($retroArchDetection.path) { (Get-Item -LiteralPath $retroArchDetection.path).VersionInfo.FileVersion } else { $null }
+            state = $retroArchDetection.state
         }
         cores = [PSCustomObject]@{
             total = $cores.Count
@@ -126,6 +149,12 @@ function Get-DoctorReport {
             missing = @($emulators | Where-Object { $_.state -eq 'not_installed' }).Count
         }
         cache = $cache
+        downloads = [PSCustomObject]@{
+            queued = $downloads.queued
+            active = $downloads.active
+            completed = $downloads.completed
+            failed = $downloads.failed
+        }
         issues = $issues
     }
 }
@@ -141,6 +170,16 @@ function Write-Result {
     }
 }
 
+function Get-ArgumentValue {
+    param([string]$Name)
+    for ($index = 0; $index -lt $Arguments.Count; $index++) {
+        if ($Arguments[$index] -eq $Name -and $index + 1 -lt $Arguments.Count) {
+            return $Arguments[$index + 1]
+        }
+    }
+    return $null
+}
+
 switch ($Command.ToLowerInvariant()) {
     'status' {
         $report = Get-DoctorReport
@@ -150,6 +189,8 @@ switch ($Command.ToLowerInvariant()) {
             cores = "$($report.cores.detected)/$($report.cores.total)"
             emulators = "$($report.emulators.detected_mappings)/$($report.emulators.mappings)"
             cache_local = $report.cache.local_cached
+            downloads_active = $report.downloads.active
+            downloads_queued = $report.downloads.queued
             issues = $report.issues
         })
     }
@@ -171,10 +212,74 @@ switch ($Command.ToLowerInvariant()) {
         Write-Result $cores
     }
     'cache' {
-        if ($filteredArguments.Count -gt 0 -and $filteredArguments[0] -ne 'status') { throw 'Use: cloudcartridge cache status [--json]' }
-        Write-Result (Get-CacheSummary)
+        $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'status' }
+        switch ($subcommand) {
+            'status' { Write-Result (Get-CacheSummary) }
+            'policy' {
+                $retentionValue = Get-ArgumentValue '--retention-days'
+                if ([string]::IsNullOrWhiteSpace($retentionValue)) {
+                    throw 'Use: cloudcartridge cache policy --retention-days 3|7|14|30|off [--dry-run|--yes]'
+                }
+                if ($retentionValue -eq 'off') {
+                    $values = @{ retention_days = $null; cleanup_enabled = $false }
+                } else {
+                    $retentionNumber = 0
+                    if (-not [int]::TryParse($retentionValue, [ref]$retentionNumber) -or $retentionNumber -notin @(3, 7, 14, 30)) {
+                        throw 'retention-days deve ser 3, 7, 14, 30 ou off.'
+                    }
+                    $values = @{ retention_days = $retentionNumber; cleanup_enabled = $true }
+                }
+                $previewOnly = -not $confirmed
+                $updated = Update-CloudCartridgeConfig -ConfigPath $configPath -Values $values -DryRun:$previewOnly
+                Write-Result ([PSCustomObject][ordered]@{
+                    applied = -not $previewOnly
+                    dry_run = $previewOnly
+                    retention_days = $updated.retention_days
+                    cleanup_enabled = [bool]$updated.cleanup_enabled
+                    config_path = $configPath
+                })
+            }
+            'pin' {
+                if ($filteredArguments.Count -lt 2) { throw 'Use: cloudcartridge cache pin <caminho-ou-catalog_id> [--dry-run|--yes]' }
+                $registryPath = Join-Path $config.local_roms_path '.cache_registry.json'
+                $result = Set-CloudCartridgeCachePin -RegistryPath $registryPath -ManagedRoot $config.local_roms_path -Identifier $filteredArguments[1] -Pinned $true -DryRun:(-not $confirmed)
+                Write-Result $result
+            }
+            'unpin' {
+                if ($filteredArguments.Count -lt 2) { throw 'Use: cloudcartridge cache unpin <caminho-ou-catalog_id> [--dry-run|--yes]' }
+                $registryPath = Join-Path $config.local_roms_path '.cache_registry.json'
+                $result = Set-CloudCartridgeCachePin -RegistryPath $registryPath -ManagedRoot $config.local_roms_path -Identifier $filteredArguments[1] -Pinned $false -DryRun:(-not $confirmed)
+                Write-Result $result
+            }
+            'cleanup' {
+                $registryPath = Join-Path $config.local_roms_path '.cache_registry.json'
+                $previewOnly = -not $confirmed
+                $results = @(Invoke-CloudCartridgeCacheCleanup `
+                    -RegistryPath $registryPath `
+                    -ManagedRoot $config.local_roms_path `
+                    -RetentionDays $config.retention_days `
+                    -CleanupEnabled ([bool]$config.cleanup_enabled) `
+                    -DryRun:$previewOnly)
+                Write-Result ([PSCustomObject][ordered]@{
+                    applied = -not $previewOnly
+                    dry_run = $previewOnly
+                    retention_days = $config.retention_days
+                    cleanup_enabled = [bool]$config.cleanup_enabled
+                    candidates = @($results | Where-Object { $_.decision -eq 'dehydrate' }).Count
+                    dehydrated = @($results | Where-Object { $_.decision -eq 'dehydrated' }).Count
+                    failed = @($results | Where-Object { $_.decision -eq 'failed' }).Count
+                    results = $results
+                })
+            }
+            default { throw 'Use: cloudcartridge cache status|policy|pin|unpin|cleanup [opcoes]' }
+        }
+    }
+    'downloads' {
+        $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'list' }
+        if ($subcommand -ne 'list') { throw 'Use: cloudcartridge downloads list [--json]' }
+        Write-Result (Get-DownloadSummary)
     }
     default {
-        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores ou cache."
+        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache ou downloads."
     }
 }

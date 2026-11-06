@@ -32,7 +32,7 @@ $config = Get-CloudCartridgeConfig -ConfigPath $configFile
 $baseDir = $config.local_roms_path
 $gDrivePath = $config.google_drive_roms_path
 $cloudSavesDir = if ($gDrivePath) { Join-Path $gDrivePath '_RA_SAVES' } else { '' }
-$retentionDays = [int]$config.retention_days
+$retentionDays = if ($config.cleanup_enabled -and $null -ne $config.retention_days) { [int]$config.retention_days } else { 0 }
 $registryFile = Join-Path $baseDir '.cache_registry.json'
 
 function Get-RegistryData {
@@ -41,11 +41,11 @@ function Get-RegistryData {
             return Get-Content -LiteralPath $registryFile -Raw -Encoding UTF8 | ConvertFrom-Json
         } catch {}
     }
-    return [PSCustomObject]@{ retention_days = $retentionDays; games = @{} }
+    return [PSCustomObject]@{ retention_days = $retentionDays; games = [PSCustomObject]@{} }
 }
 
 function Save-RegistryData ($reg) {
-    try { Write-CloudCartridgeJsonAtomic -InputObject $reg -Path $registryFile -Depth 5 } catch {}
+    Write-CloudCartridgeJsonAtomic -InputObject $reg -Path $registryFile -Depth 5
 }
 
 function Get-ProgressBar ([double]$percent, [int]$barWidth = 36) {
@@ -68,6 +68,9 @@ function Set-TelemetryCursor ([int]$left, [int]$top) {
 function Get-RemainingTimeStr ([DateTime]$lastPlayed, [bool]$isPinned) {
     if ($isPinned) {
         return " EM CAMPANHA (FIXADO - NUNCA EXPIRA)"
+    }
+    if (-not $config.cleanup_enabled) {
+        return "RETENCAO DESATIVADA"
     }
     $expireTime = $lastPlayed.AddDays($retentionDays)
     $now = Get-Date
@@ -233,6 +236,19 @@ $fileName = $fileItem.Name
 $totalBytes = $fileItem.Length
 $totalMB = [math]::Round($totalBytes / 1MB, 2)
 $platform = Split-Path (Split-Path $FilePath -Parent) -Leaf
+$downloadJournal = Join-Path $baseDir '.download_jobs.json'
+$catalogId = Get-CloudCartridgeCatalogIdForPath -Path $FilePath
+$jobPriority = if ($PrefetchOnly) { 'prefetch' } else { 'current' }
+$registration = Register-CloudCartridgeDownloadJob -JournalPath $downloadJournal -ManagedRoot $baseDir -FilePath $FilePath -CatalogId $catalogId -Priority $jobPriority
+if ($registration.deduplicated) {
+    Write-Host "[Fila] Download ja solicitado; reutilizando job $($registration.job.job_id)." -ForegroundColor Gray
+    exit 0
+}
+$downloadJobId = $registration.job.job_id
+while (-not (Enter-CloudCartridgeDownloadJob -JournalPath $downloadJournal -JobId $downloadJobId -MaxConcurrent ([int]$config.max_concurrent_downloads))) {
+    Start-Sleep -Milliseconds 250
+}
+$null = Set-CloudCartridgeDownloadJobState -JournalPath $downloadJournal -JobId $downloadJobId -State active -TotalBytes $totalBytes
 
 Write-Host "==========================================================================================" -ForegroundColor Cyan
 Write-Host "                  TELEMETRIA CLOUDCARTRIDGE - DOWNLOAD EM TEMPO REAL                     " -ForegroundColor Yellow
@@ -294,13 +310,21 @@ try {
             Write-Host "$([math]::Round($elapsedSec, 1))s decorridos | ETA restante: $($etaSec)s     " -ForegroundColor White
         }
     }
+} catch {
+    $null = Set-CloudCartridgeDownloadJobState -JournalPath $downloadJournal -JobId $downloadJobId -State failed -BytesDownloaded $readTotal -TotalBytes $totalBytes -ErrorMessage $_.Exception.Message
+    throw
 } finally {
     if ($stream) { $stream.Close(); $stream.Dispose() }
     $stopwatch.Stop()
 }
+$null = Set-CloudCartridgeDownloadJobState -JournalPath $downloadJournal -JobId $downloadJobId -State completed -BytesDownloaded $readTotal -TotalBytes $totalBytes
 
 $reg = Get-RegistryData
-if (-not $reg.games) { $reg | Add-Member -MemberType NoteProperty -Name "games" -Value ([PSCustomObject]@{}) }
+if (-not $reg.PSObject.Properties['games']) {
+    $reg | Add-Member -MemberType NoteProperty -Name 'games' -Value ([PSCustomObject]@{})
+} elseif ($null -eq $reg.games) {
+    $reg.games = [PSCustomObject]@{}
+}
 $cleanPath = $FilePath.Replace('/', '\')
 $existingPinned = $false
 if ($reg.games.PSObject.Properties[$cleanPath] -and $reg.games.$cleanPath.is_pinned) {

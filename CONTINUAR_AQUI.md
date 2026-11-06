@@ -8,7 +8,7 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 
 - Branch: `main`, baseline inicial `8b7cfa7`.
 - Fase 0 concluída: código, dependências e riscos auditados.
-- Fase 1 em andamento: primeiro lote de estabilização integrado e coberto por testes.
+- Fase 1 em andamento: dois lotes de estabilização integrados e cobertos por testes.
 - Backup anterior à Fase 1: `..\backups\CloudCartridge-phase1-20261106\` (bundle Git completo e snapshot de configuração do RetroArch).
 
 ## Alterações deste marco
@@ -21,10 +21,13 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 - `CloudCartridge.cmd`: CLI local de diagnóstico e inventário.
 - `Testar_CloudCartridge.cmd`: regressão isolada.
 - Force-push automático removido.
+- Política/pin/limpeza do cache são prévia por padrão e só aplicam com `--yes`.
+- Journal de downloads deduplica solicitações, prioriza o jogo atual e limita concorrência.
+- Launcher e CLI compartilham o mesmo executor de limpeza segura.
 
 ## Evidência atual
 
-- `Testar_CloudCartridge.cmd`: 12 aprovados, 0 falhas.
+- `Testar_CloudCartridge.cmd`: 19 aprovados, 0 falhas.
 - Smoke real em PowerShell 5.1 do Launcher e Telemetria com fixture temporária.
 - `doctor --json`: RetroArch detectado, 45/46 mapeamentos de core detectados, 6/6 mapeamentos standalone (5 executáveis únicos).
 - Alertas atuais: `config.json` local ausente, destino de Cloud Save não configurado e Wii U ainda com mapeamento `DETECT`.
@@ -39,7 +42,7 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 
 ## Próxima ação
 
-Fechar o restante da Fase 1: configuração local segura, detecção dinâmica, política de cache configurável, fila de download/prefetch e testes dos cenários locais T01–T14/T27/T37/T38/T39. Depois iniciar Save Guardian da Fase 2 com fixtures e merge de três vias.
+Fechar T05/T06/T27 com checksum e retomada segura da hidratação e ampliar T39 para comparar configuração efetiva de saves/cores. Depois iniciar o Save Guardian da Fase 2 com fixtures, manifesto e merge de três vias.
 
 Comando de retomada:
 

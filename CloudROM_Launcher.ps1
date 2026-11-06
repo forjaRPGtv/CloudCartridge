@@ -21,7 +21,7 @@ $config = Get-CloudCartridgeConfig -ConfigPath $configFile
 $baseDir = $config.local_roms_path
 $gDrivePath = $config.google_drive_roms_path
 $cloudSavesDir = if ($gDrivePath) { Join-Path $gDrivePath '_RA_SAVES' } else { '' }
-$retentionDays = [int]$config.retention_days
+$retentionDays = if ($config.cleanup_enabled -and $null -ne $config.retention_days) { [int]$config.retention_days } else { 0 }
 $registryFile = Join-Path $baseDir '.cache_registry.json'
 $coreMappingFile = Join-Path $scriptDir "core_mapping.json"
 $standaloneFile = Join-Path $scriptDir "standalone_emulators.json"
@@ -100,52 +100,16 @@ function Invoke-CachePurge {
         return
     }
     Write-Host "`n[Auto-Purge] Verificando jogos com mais de $retentionDays dias sem uso..." -ForegroundColor Cyan
-    $reg = Get-CacheRegistry
-    $now = Get-Date
-    $purgedCount = 0
-    $freedMB = 0
-
-    if ($reg.games) {
-        $keys = @($reg.games.PSObject.Properties.Name)
-        foreach ($key in $keys) {
-            $item = $reg.games.$key
-            if (-not $item.last_played) { continue }
-
-            if ($item.is_pinned -eq $true) {
-                Write-Host "   Jogo em campanha (protegido): $($item.title)" -ForegroundColor Green
-                continue
-            }
-
-            $lastPlayed = [DateTime]$item.last_played
-            $diff = $now - $lastPlayed
-
-            if ($diff.TotalDays -ge $retentionDays) {
-                $targetFile = $key
-                $purged = $false
-                if ((Test-CloudCartridgePathWithinRoot -Path $targetFile -Root $baseDir) -and
-                    $targetFile -notlike '*\_RA_*' -and
-                    (Test-Path -LiteralPath $targetFile -PathType Leaf)) {
-                    try {
-                        $p = Start-Process -FilePath "attrib.exe" -ArgumentList "+u", "-p", "`"$targetFile`"" -NoNewWindow -Wait -PassThru
-                        if ($p.ExitCode -eq 0) {
-                            $size = if ($item.size_mb) { [double]$item.size_mb } else { 0 }
-                            $freedMB += $size
-                            $purgedCount++
-                            $purged = $true
-                            Write-Host "  -> Espaco liberado no PC: $($item.title) ($($diff.Days) dias sem jogar)" -ForegroundColor Yellow
-                        }
-                    } catch {}
-                }
-                if ($purged) {
-                    $item.status = "cloud_only"
-                }
-            }
-        }
+    $results = @(Invoke-CloudCartridgeCacheCleanup -RegistryPath $registryFile -ManagedRoot $baseDir -RetentionDays $retentionDays -CleanupEnabled $true)
+    foreach ($result in @($results | Where-Object { $_.decision -eq 'dehydrated' })) {
+        Write-Host "  -> Espaco liberado no PC: $($result.title)" -ForegroundColor Yellow
     }
-
-    Save-CacheRegistry $reg
+    foreach ($result in @($results | Where-Object { $_.decision -eq 'failed' })) {
+        Write-Warning "Falha ao liberar '$($result.title)': $($result.reason)"
+    }
+    $purgedCount = @($results | Where-Object { $_.decision -eq 'dehydrated' }).Count
     if ($purgedCount -gt 0) {
-        Write-Host "[Auto-Purge] Limpeza concluida: $purgedCount jogo(s) liberados (~$([math]::Round($freedMB, 1)) MB economizados).`n" -ForegroundColor Green
+        Write-Host "[Auto-Purge] Limpeza concluida: $purgedCount jogo(s) liberados.`n" -ForegroundColor Green
     } else {
         Write-Host "[Auto-Purge] Nenhum jogo expirado no momento. Cache 100% otimizado.`n" -ForegroundColor Gray
     }
