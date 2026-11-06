@@ -1,130 +1,70 @@
-# 🎮 CloudCartridge: Emulação Inteligente na Nuvem via Google Drive
+# CloudCartridge
 
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue.svg)](https://microsoft.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![RetroArch](https://img.shields.io/badge/RetroArch-Compatible-brightgreen.svg)](https://www.retroarch.com)
-[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-blue.svg)](https://microsoft.com/powershell)
+Cliente PowerShell para organizar uma biblioteca de emulação mantida pelo Google Drive para Desktop, com cache local controlado, playlists do RetroArch, proteção de saves, Host privado para até cinco convidados e planejamento isolado de transferências para MiSTer.
 
-> **Jogue centenas de gigabytes de jogos retrô diretamente da nuvem sem lotar o seu SSD local.**  
-> O **CloudCartridge** utiliza o streaming nativo do Google Drive para Desktop e Junções NTFS no Windows com download sob demanda, painel de telemetria em tempo real, retenção inteligente de 3 dias no PC, pré-carregamento multi-disco e sincronização automática de saves na nuvem (*Cloud Save Sync*).
+O projeto funciona sem IA. A Agent Skill incluída serve apenas para manutenção assistida do repositório.
 
-> **Estado vNext:** a evolução está sendo entregue por fases. O cliente PowerShell existente continua funcional, mas Host multiusuário, Save Guardian completo, CLI final e MiSTer ainda não devem ser presumidos implementados. Consulte `CloudCartridge_vNext_PLANO_MESTRE_CODEX.md` e `docs/FASE_1_ESTABILIZACAO.md`.
+## Estado atual
 
----
+Implementado e testado com fixtures isolados:
 
-## ✨ Principais Funcionalidades
+- CLI para diagnóstico, detecção conservadora, cache e fila de downloads com SHA-256;
+- retenção configurável (`3`, `7`, `14`, `30` dias ou desativada), pin e proteção de cópias manuais;
+- Save Guardian com manifesto de três vias, versões, conflitos, locks e fila offline;
+- playlists incrementais/idempotentes, `.m3u`, catálogo persistente e thumbnails ausentes;
+- Host privado autenticado, cinco vagas, convites de uso único, recuperação e isolamento de saves;
+- listener loopback por padrão, proteção contra replay/rate limit e logs redigidos;
+- adaptador MiSTer isolado com matriz de compatibilidade e verificação por hash;
+- testes automatizados que não usam ROMs, saves ou credenciais pessoais.
 
-- ☁️ **0 Bytes Físicos no SSD:** Todos os seus jogos ficam guardados na sua conta do Google Drive e aparecem nas pastas do Windows como arquivos virtuais transparentes.
-- ⚡ **Download Sob Demanda com Telemetria Visual:** Ao iniciar um jogo que ainda não foi baixado, uma janela de telemetria abre com barra de progresso em tempo real, velocidade instantânea em **MB/s** e tempo estimado (**ETA**).
-- 🕒 **Política Inteligente de Retenção de 3 Dias:** O jogo baixado fica no seu PC por **3 dias** para você jogar sem gastar internet. Passado esse período, o espaço no SSD é liberado automaticamente (`attrib +u -p`), mantendo o jogo seguro na nuvem e visível na pasta.
-- ⭐ **Modo Campanha (*Pin / Never Purge*):** Fixe seus jogos favoritos ou em campanha ativa para que nunca sejam apagados do PC até você desmarcar.
-- 💾 **Cloud Save Sync:** Ao fechar a partida, seus saves e savestates são enviados automaticamente para a nuvem no Google Drive.
-- 💿 **Multi-Disc Pre-fetch:** Ao baixar o Disco 1 de um jogo longo (PS1, PS2, GameCube), o sistema detecta e pré-baixa os discos adicionais em segundo plano.
-- 🖱️ **Menu de Contexto no Windows Explorer:** Clique com o botão direito em qualquer ROM para jogar diretamente ou liberar espaço em 1 clique.
-- 🕹️ **Compatibilidade Multi-Emulador:** Suporte completo para **RetroArch** (46 plataformas) e emuladores standalone de alta performance (**PCSX2**, **Dolphin**, **Cemu**, **Citra**, **RPCS3**, **DuckStation**).
+Ainda exigem validação no ambiente real: hidratação/desidratação CFAPI do Google Drive, DPAPI no perfil Windows interativo, rede privada entre dois PCs e transferência/save em um MiSTer físico. O suporte a emuladores depende do executável/core realmente detectado; o CloudCartridge não os instala automaticamente.
 
----
+## Requisitos
 
-## 📋 Requisitos do Sistema
+- Windows 10 ou 11;
+- Windows PowerShell 5.1 ou PowerShell 7+;
+- Google Drive para Desktop em modo de streaming, quando a biblioteca em nuvem for usada;
+- RetroArch e/ou emuladores standalone instalados manualmente.
 
-1. **Windows 10 ou Windows 11** (x64).
-2. **[Google Drive para Desktop](https://www.google.com/drive/download/)** instalado e conectado à sua conta Google em modo **"Fazer streaming de arquivos"** (*Stream files*).
-3. **[RetroArch](https://www.retroarch.com/)** ou qualquer emulador standalone instalado.
+## Instalação segura
 
----
+1. Feche o RetroArch.
+2. Execute `Instalar_Configurar.cmd`.
+3. Informe os caminhos solicitados.
+4. Revise a prévia. Nada é gravado até digitar exatamente `APLICAR`.
 
-## 🚀 Como Instalar e Usar (3 Passos Simples)
+O instalador cria backup de uma configuração existente antes de migrá-la, preserva destinos já existentes e só cria junções quando solicitado. Para orientação detalhada, consulte [Manual do iniciante](docs/MANUAL_INICIANTE.md).
 
-### Passo 1: Baixar o Repositório
-Baixe o arquivo ZIP deste repositório ou clone usando o Git:
-```bash
-git clone https://github.com/forjaRPGtv/CloudCartridge.git
-```
+## Uso rápido
 
-### Passo 2: Executar o Assistente de Configuração
-Dê dois cliques no arquivo:
 ```cmd
-Instalar_Configurar.cmd
-```
-O assistente interativo guiará você:
-1. Informe onde fica sua pasta de jogos no Google Drive (exemplo: `G:\Meu Drive\_ISOS_ROMS_`).
-2. Escolha onde suas pastas virtuais serão criadas no PC (exemplo: `Z:\_ISOS_ROMS_` ou `C:\Games\ROMs`).
-3. O script criará automaticamente as **Junções NTFS** de todos os consoles com **zero bytes de consumo de disco**.
-4. (Opcional) Escolha se deseja registrar os atalhos no botão direito do mouse.
-
-### Passo 3: Jogar!
-Escolha como prefere iniciar seus jogos:
-- **Pelo Launcher Interativo:** Dê dois cliques em `Jogar.cmd` (permite busca global por nome em todos os consoles ao mesmo tempo).
-- **Pelo RetroArch com Telemetria Ativa:** Dê dois cliques em `Abrir_RetroArch_com_Telemetria.cmd`.
-- **Direto pelo Windows Explorer:** Clique com o botão direito em qualquer ROM e escolha **"Jogar com CloudCartridge Telemetria"**.
-
----
-
-## 📊 Terminal de Telemetria e Dashboard de Prazos
-
-Dê dois cliques em `Ver_Telemetria_e_Downloads.cmd` para abrir a qualquer hora o painel de status do seu PC:
-
-```text
-==========================================================================================
-                    TELEMETRIA CLOUDCARTRIDGE - DOWNLOAD EM TEMPO REAL                    
-==========================================================================================
- [PAINEL 1] ARQUIVO EM TRANSFERÊNCIA
- -----------------------------------------------------------------------------------------
- Plataforma : Sony - PlayStation
- Arquivo    : Crash Bash (USA).chd
- Tamanho    : 58.3 MB
- Origem     : Google Drive (Nuvem)
- -----------------------------------------------------------------------------------------
- Progresso  : [██████████████████████░░░░░░░░░░░░░░] 61.4%
- Baixado    : 35.8 MB de 58.3 MB
- Velocidade : 22.4 MB/s
- Tempo      : 1.6s decorridos | ETA restante: 1s
-
-==========================================================================================
- [PAINEL 2] JOGOS INSTALADOS NO PC & CONTAGEM REGRESSIVA (RETENÇÃO: 3 DIAS)             
-==========================================================================================
- • [Sony - PlayStation] Legend of Legaia (USA) (420.0 MB)
-   -> Jogado em: 25/10 18:10 | Falta para sair: 2 dia(s), 23 h e 48 min
- • [Nintendo - Game Boy] Zuigao Jimi (0.02 MB)
-   -> Jogado em: 25/10 17:58 | Falta para sair: 2 dia(s), 23 h e 36 min
-------------------------------------------------------------------------------------------
- Total em disco: 420.02 MB em 2 jogo(s) instalados.
- *Ao zerar o tempo, o espaço é liberado sem apagar nada da nuvem nem perder seus saves.
-==========================================================================================
+CloudCartridge.cmd status --json
+CloudCartridge.cmd doctor --json
+CloudCartridge.cmd detect --refresh --json
+CloudCartridge.cmd host monitor --json
+CloudCartridge.cmd host monitor --watch
+Testar_CloudCartridge.cmd
 ```
 
----
+Atalhos legados permanecem disponíveis para o launcher e a telemetria:
 
-## 🛠️ Estrutura de Arquivos
+- `Jogar.cmd`
+- `Abrir_RetroArch_com_Telemetria.cmd`
+- `Ver_Telemetria_e_Downloads.cmd`
+- `Monitorar_Host.cmd`
 
-| Arquivo / Script | Função |
-| :--- | :--- |
-| `Instalar_Configurar.cmd` | Assistente inicial One-Click para configurar caminhos e junções. |
-| `Jogar.cmd` | Launcher principal com pesquisa rápida e seleção de consoles. |
-| `Abrir_RetroArch_com_Telemetria.cmd` | Executa o RetroArch com o Guardião de background ativo. |
-| `Ver_Telemetria_e_Downloads.cmd` | Abre o dashboard com jogos instalados e contadores de tempo. |
-| `Instalar_Menu_Contexto.cmd` | Adiciona as opções de botão direito no Windows Explorer. |
-| `CloudROM_Launcher.ps1` | Motor principal de navegação, purga de 3 dias e execução. |
-| `CloudROM_Telemetry.ps1` | Painel gráfico em terminal com medição de MB/s e ETA. |
-| `CloudROM_Watcher.ps1` | Monitor de I/O de background para capturar aberturas pelo RetroArch. |
-| `CloudCartridge.Core.psm1` | Regras compartilhadas de configuração, integridade e caminhos seguros. |
-| `CloudCartridge.cmd` | CLI local para `status`, `doctor`, detecção, cores, emuladores e cache. |
-| `Testar_CloudCartridge.cmd` | Regressão isolada sem tocar ROMs ou saves reais. |
-| `core_mapping.json` | Mapeamento automático de Cores do RetroArch para 46 sistemas. |
-| `standalone_emulators.template.json` | Configuração de emuladores dedicados (Dolphin, PCSX2, etc.). |
+## Segurança e privacidade
 
----
+O cliente usa caminhos locais fornecidos pelo usuário e não recebe credenciais do Google Drive. O Host possui credenciais próprias de dispositivo e recuperação, mas armazena somente hashes/verificadores; tokens e recovery keys não devem entrar em configuração, log ou Git. A recuperação sem a chave e sem outro dispositivo válido não é prometida.
 
-## 🔒 Segurança e Privacidade
+O Host escuta apenas em loopback por padrão. Exposição em LAN é opt-in, aceita somente endereço privado e continua exigindo autenticação. Nunca publique o listener diretamente na Internet.
 
-- **Zero Credenciais:** O CloudCartridge **não** possui, não solicita e não armazena nenhuma senha ou token de autenticação.
-- **Isolamento de Nuvem:** Toda a comunicação segura é realizada pelo aplicativo oficial do Google Drive para Desktop com criptografia TLS 1.3.
-- **Proteção dos seus Jogos:** A liberação de espaço nunca deleta arquivos da nuvem; ela apenas descarta o cache temporário do Windows.
+Leia [Privacidade e recuperação](docs/PRIVACIDADE_E_RECUPERACAO.md) e o [Manual técnico](docs/MANUAL_TECNICO.md).
 
----
+## Empacotamento
 
-## 📄 Licença
+`Criar_Pacote.ps1` mostra uma prévia por padrão. Use `-Apply` para gerar um ZIP sanitizado com manifesto SHA-256; `config.json`, bancos do Host, logs, backups, caches e segredos não são incluídos.
 
-Distribuído sob a licença **MIT**. Consulte o arquivo [LICENSE](LICENSE) para obter mais informações.
+## Licença
 
-Desenvolvido por **Arthur Reis**.
+Distribuído sob a licença [MIT](LICENSE). Desenvolvido por Arthur Reis.

@@ -744,7 +744,11 @@ try {
         Assert-True (-not (Test-CloudCartridgeHostBindAddress -Address '0.0.0.0' -AllowLan)) 'Bind wildcard foi aceito.'
 
         $listenerRoot = Join-Path $tempRoot 'listener-smoke'
-        $port = Get-Random -Minimum 43000 -Maximum 49000
+        $portProbe = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
+        try {
+            $portProbe.Start()
+            $port = ([System.Net.IPEndPoint]$portProbe.LocalEndpoint).Port
+        } finally { $portProbe.Stop() }
         $serverScript = Join-Path $repoRoot 'CloudCartridge.HostServer.ps1'
         $serverJob = Start-Job -ScriptBlock {
             param($Script, $Root, $Port)
@@ -799,6 +803,66 @@ try {
         }
         Assert-True ($applied.state -eq 'transferred' -and (Test-Path -LiteralPath $applied.destination -PathType Leaf)) 'Transferencia MiSTer de fixture falhou.'
         Assert-True ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $applied.destination -Algorithm SHA256).Hash) 'Transferencia MiSTer alterou conteudo.'
+    }
+
+    Invoke-Test 'Installer previews, applies and backs up in isolated fixture' {
+        $fixture = Join-Path $tempRoot 'installer-fixture'
+        New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'Setup_CloudROM.ps1'),(Join-Path $repoRoot 'CloudCartridge.Core.psm1') -Destination $fixture
+        $drive = Join-Path $fixture 'drive'
+        $library = Join-Path $fixture 'library'
+        New-Item -ItemType Directory -Path $drive -Force | Out-Null
+        $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $fixture 'Setup_CloudROM.ps1'), '-GoogleDrivePath', $drive, '-LocalRomsPath', $library, '-RetroArchPath', (Join-Path $fixture 'retroarch.exe'), '-NonInteractive')
+        $previewOutput = & powershell.exe @arguments 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "Preview do instalador falhou: $($previewOutput -join ' ')"
+        $preview = ($previewOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($preview.dry_run -and -not $preview.applied) 'Preview do instalador incorreta.'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $fixture 'config.json')) -and -not (Test-Path -LiteralPath $library)) 'Preview do instalador alterou o fixture.'
+
+        $appliedOutput = & powershell.exe @arguments -Apply 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "Aplicacao do instalador falhou: $($appliedOutput -join ' ')"
+        $applied = ($appliedOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($applied.applied -and (Test-Path -LiteralPath $library -PathType Container)) 'Instalador nao criou configuracao isolada.'
+        $secondOutput = & powershell.exe @arguments -Apply 2>&1
+        $second = ($secondOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and $second.backup_path -and (Test-Path -LiteralPath $second.backup_path -PathType Leaf)) 'Atualizacao do instalador nao criou backup.'
+    }
+
+    Invoke-Test 'Host monitor is sanitized and works once' {
+        $databasePath = Join-Path $tempRoot 'monitor\users.json'
+        $database = [PSCustomObject]@{ schema_version = 1; profiles = @([PSCustomObject]@{ profile_id = [Guid]::NewGuid().ToString(); profile_code = 'ARTHUR01'; display_name = 'Arthur'; active = $true; devices = @([PSCustomObject]@{ active = $true; token_hash = 'TOKEN_NAO_EXIBIR' }); created_utc = [DateTime]::UtcNow.ToString('o'); revoked_utc = $null; recovery_verifier = 'VERIFICADOR_NAO_EXIBIR' }); invites = @() }
+        Write-CloudCartridgeJsonAtomic -InputObject $database -Path $databasePath -Depth 8
+        $monitorOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.HostMonitor.ps1') -DatabasePath $databasePath -Once -NoColor 2>&1
+        $text = $monitorOutput -join "`n"
+        Assert-True ($LASTEXITCODE -eq 0 -and $text -match 'Arthur' -and $text -match '1/5') "Monitor incompleto: $text"
+        Assert-True ($text -notmatch 'TOKEN_NAO_EXIBIR|VERIFICADOR_NAO_EXIBIR') 'Monitor vazou segredo.'
+    }
+
+    Invoke-Test 'Agent Skill has valid local structure and safety rules' {
+        $skillRoot = Join-Path $repoRoot '.agents\skills\cloudcartridge'
+        $skillPath = Join-Path $skillRoot 'SKILL.md'
+        $skillText = Get-Content -LiteralPath $skillPath -Raw -Encoding UTF8
+        Assert-True ($skillText -match '(?s)^---\s*\r?\nname: cloud-cartridge\r?\ndescription: .+?\r?\n---') 'Frontmatter da Skill invalido.'
+        Assert-True ($skillText -match 'Never print' -and $skillText -match 'Never expose the Host' -and $skillText -match 'fixture') 'Skill perdeu limites de seguranca/validacao.'
+        Assert-True (Test-Path -LiteralPath (Join-Path $skillRoot 'references\commands.md') -PathType Leaf) 'Referencia de comandos ausente.'
+        Assert-True (Test-Path -LiteralPath (Join-Path $skillRoot 'references\troubleshooting.md') -PathType Leaf) 'Referencia de troubleshooting ausente.'
+    }
+
+    Invoke-Test 'Release package excludes runtime and secret data' {
+        $packagePath = Join-Path $tempRoot 'package\CloudCartridge-test.zip'
+        $previewOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'Criar_Pacote.ps1') -OutputPath $packagePath 2>&1
+        $preview = ($previewOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and $preview.dry_run -and -not (Test-Path -LiteralPath $packagePath)) 'Preview do pacote gravou arquivo.'
+        $packageOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'Criar_Pacote.ps1') -OutputPath $packagePath -Apply 2>&1
+        Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) "Empacotamento falhou: $($packageOutput -join ' ')"
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [IO.Compression.ZipFile]::OpenRead($packagePath)
+        try {
+            $names = @($archive.Entries | ForEach-Object FullName)
+            Assert-True ($names -contains 'README.md' -and $names -contains 'MANIFEST-SHA256.txt') 'Pacote sem README ou manifesto.'
+            $forbidden = @($names | Where-Object { $_ -match '(^|/)(config\.json|host-data|backups|dist|client-credentials)' -or $_ -match '\.(log|tmp|bak|zip)$' })
+            Assert-True ($forbidden.Count -eq 0) "Pacote contem dados proibidos: $($forbidden -join ', ')"
+        } finally { $archive.Dispose() }
     }
 
     Invoke-Test 'Publish script has no force push' {

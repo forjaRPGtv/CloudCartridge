@@ -2,6 +2,12 @@
 config.json
 standalone_emulators.json
 .cache_registry.json
+.download_jobs.json
+host-data/
+backups/
+dist/
+client-credentials*.json
+*credential*.json
 
 # Logs e arquivos temporarios
 *.log

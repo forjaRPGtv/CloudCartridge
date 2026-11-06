@@ -14,7 +14,8 @@ Import-Module (Join-Path $scriptDir 'CloudCartridge.Mister.psm1') -Force
 
 $jsonOutput = $Arguments -contains '--json'
 $confirmed = $Arguments -contains '--yes'
-$filteredArguments = @($Arguments | Where-Object { $_ -notin @('--json', '--refresh', '--available', '--dry-run', '--yes') })
+$watch = $Arguments -contains '--watch'
+$filteredArguments = @($Arguments | Where-Object { $_ -notin @('--json', '--refresh', '--available', '--dry-run', '--yes', '--watch') })
 $configPath = Join-Path $scriptDir 'config.json'
 $config = Get-CloudCartridgeConfig -ConfigPath $configPath
 
@@ -429,7 +430,13 @@ switch ($Command.ToLowerInvariant()) {
         $databasePath = Get-ArgumentValue '--database'
         if ([string]::IsNullOrWhiteSpace($databasePath)) { $databasePath = Join-Path $scriptDir 'host-data\admin\users.json' }
         switch ($subcommand) {
-            'monitor' { Write-Result (Get-CloudCartridgeHostStatus -DatabasePath $databasePath) }
+            'monitor' {
+                if ($watch) {
+                    & (Join-Path $scriptDir 'CloudCartridge.HostMonitor.ps1') -DatabasePath $databasePath
+                } else {
+                    Write-Result (Get-CloudCartridgeHostStatus -DatabasePath $databasePath)
+                }
+            }
             'users' {
                 $action = if ($filteredArguments.Count -gt 1) { $filteredArguments[1] } else { 'list' }
                 switch ($action) {
@@ -450,7 +457,7 @@ switch ($Command.ToLowerInvariant()) {
                     default { throw 'Use: cloudcartridge host users list|invite|revoke [opcoes]' }
                 }
             }
-            default { throw 'Use: cloudcartridge host monitor|users [opcoes]' }
+            default { throw 'Use: cloudcartridge host monitor [--watch]|users [opcoes]' }
         }
     }
     'mister' {
