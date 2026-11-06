@@ -8,6 +8,8 @@
 > **Jogue centenas de gigabytes de jogos retrô diretamente da nuvem sem lotar o seu SSD local.**  
 > O **CloudCartridge** utiliza o streaming nativo do Google Drive para Desktop e Junções NTFS no Windows com download sob demanda, painel de telemetria em tempo real, retenção inteligente de 3 dias no PC, pré-carregamento multi-disco e sincronização automática de saves na nuvem (*Cloud Save Sync*).
 
+> **Estado vNext:** a evolução está sendo entregue por fases. O cliente PowerShell existente continua funcional, mas Host multiusuário, Save Guardian completo, CLI final e MiSTer ainda não devem ser presumidos implementados. Consulte `CloudCartridge_vNext_PLANO_MESTRE_CODEX.md` e `docs/FASE_1_ESTABILIZACAO.md`.
+
 ---
 
 ## ✨ Principais Funcionalidades
@@ -105,6 +107,9 @@ Dê dois cliques em `Ver_Telemetria_e_Downloads.cmd` para abrir a qualquer hora 
 | `CloudROM_Launcher.ps1` | Motor principal de navegação, purga de 3 dias e execução. |
 | `CloudROM_Telemetry.ps1` | Painel gráfico em terminal com medição de MB/s e ETA. |
 | `CloudROM_Watcher.ps1` | Monitor de I/O de background para capturar aberturas pelo RetroArch. |
+| `CloudCartridge.Core.psm1` | Regras compartilhadas de configuração, integridade e caminhos seguros. |
+| `CloudCartridge.cmd` | CLI local para `status`, `doctor`, detecção, cores, emuladores e cache. |
+| `Testar_CloudCartridge.cmd` | Regressão isolada sem tocar ROMs ou saves reais. |
 | `core_mapping.json` | Mapeamento automático de Cores do RetroArch para 46 sistemas. |
 | `standalone_emulators.template.json` | Configuração de emuladores dedicados (Dolphin, PCSX2, etc.). |
 

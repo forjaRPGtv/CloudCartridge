@@ -41,13 +41,13 @@ foreach ($ext in $extensions) {
     Set-ItemProperty -LiteralPath $keyPlay -Name '(Default)' -Value "Jogar com CloudCartridge Telemetria"
     Set-ItemProperty -LiteralPath $cmdPlay -Name '(Default)' -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$telemetryScript`" -FilePath `"%1`" -LaunchAfter"
 
-    # 2. Liberar Espaço no PC (Manter na Nuvem)
+    # 2. Liberar Espaco no PC (Manter na Nuvem)
     $keyFree = "HKCU:\Software\Classes\SystemFileAssociations\$ext\shell\CloudROM_Free"
     $cmdFree = "$keyFree\command"
     if (-not (Test-Path -LiteralPath $cmdFree)) {
         New-Item -Path $cmdFree -Force | Out-Null
     }
-    Set-ItemProperty -LiteralPath $keyFree -Name '(Default)' -Value "CloudCartridge: Liberar Espaço no PC (Manter na Nuvem)"
+    Set-ItemProperty -LiteralPath $keyFree -Name '(Default)' -Value "CloudCartridge: Liberar Espaco no PC (Manter na Nuvem)"
     Set-ItemProperty -LiteralPath $cmdFree -Name '(Default)' -Value "attrib.exe +u -p `"%1`""
 }
 

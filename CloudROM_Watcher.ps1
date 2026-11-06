@@ -1,5 +1,5 @@
 # ==============================================================================
-# CloudROM Watcher - Guardião de Telemetria Universal para RetroArch & Standalone
+# CloudROM Watcher - Guardiao de Telemetria Universal para RetroArch & Standalone
 # Monitora content_history.lpl e processos de emuladores para disparar a Telemetria
 # Arthur Reis Projetos
 # ==============================================================================
@@ -12,12 +12,17 @@ param (
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-$baseDir = 'Z:\_ISOS_ROMS_'
-$telemetryScript = 'z:\_Arthur_Projetos\RetroArch-Tools\CloudROM_Telemetry.ps1'
-$historyFile = 'C:\RetroArch-Win64\playlists\builtin\content_history.lpl'
+$scriptDir = $PSScriptRoot
+$modulePath = Join-Path $scriptDir 'CloudCartridge.Core.psm1'
+Import-Module $modulePath -Force
+$config = Get-CloudCartridgeConfig -ConfigPath (Join-Path $scriptDir 'config.json')
+$baseDir = $config.local_roms_path
+$telemetryScript = Join-Path $scriptDir 'CloudROM_Telemetry.ps1'
+$retroArchDir = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($config.retroarch_path))
+$historyFile = Join-Path $retroArchDir 'playlists\builtin\content_history.lpl'
 $historyDir = Split-Path $historyFile -Parent
 
-# Extensões suportadas de jogos
+# Extensoes suportadas de jogos
 $validExtensions = @(
     '.7z', '.zip', '.chd', '.iso', '.cso', '.bin', '.cue', 
     '.pbp', '.wbfs', '.rvz', '.nes', '.sfc', '.smc', '.gba', 
@@ -29,7 +34,7 @@ $standaloneProcs = @(
     'pcsx2-qt', 'Dolphin', 'Cemu', 'rpcs3', 'citra-qt', 'duckstation-qt-x64-ReleaseLTCG'
 )
 
-# Cache em memória para evitar abrir múltiplas janelas para o mesmo jogo
+# Cache em memoria para evitar abrir multiplas janelas para o mesmo jogo
 $activeGames = [System.Collections.Concurrent.ConcurrentDictionary[string, DateTime]]::new()
 
 function Trigger-TelemetryWindow ([string]$targetFile) {
@@ -46,7 +51,9 @@ function Trigger-TelemetryWindow ([string]$targetFile) {
         return
     }
 
-    if (-not (Test-Path -LiteralPath $cleanPath)) {
+    if (-not (Test-Path -LiteralPath $cleanPath) -or
+        -not (Test-CloudCartridgePathWithinRoot -Path $cleanPath -Root $baseDir) -or
+        -not (Test-Path -LiteralPath $telemetryScript -PathType Leaf)) {
         return
     }
 
@@ -82,7 +89,7 @@ function Check-RetroArchHistory {
             $data = Get-Content -LiteralPath $historyFile -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($data.items -and $data.items.Count -gt 0) {
                 $latest = $data.items[0]
-                if ($latest.path -and $latest.path -like 'Z:\_ISOS_ROMS_\*') {
+                if ($latest.path -and (Test-CloudCartridgePathWithinRoot -Path $latest.path -Root $baseDir)) {
                     Trigger-TelemetryWindow $latest.path
                 }
             }
@@ -109,11 +116,11 @@ function Check-StandaloneEmulators {
 
 Clear-Host
 Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "      CloudROM Watcher - Guardião de Telemetria Universal        " -ForegroundColor Yellow
+Write-Host "      CloudROM Watcher - Guardiao de Telemetria Universal        " -ForegroundColor Yellow
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host "Status: Ativo e monitorando RetroArch e Emuladores Standalone..." -ForegroundColor White
 Write-Host "Sempre que qualquer jogo for aberto (pelo menu ou atalho)," -ForegroundColor Gray
-Write-Host "a janela de telemetria abrirá automaticamente!" -ForegroundColor Gray
+Write-Host "a janela de telemetria abrira automaticamente!" -ForegroundColor Gray
 Write-Host "=================================================================`n" -ForegroundColor DarkCyan
 
 # 1. Configurar FileSystemWatcher no content_history.lpl do RetroArch
@@ -129,7 +136,7 @@ if (Test-Path -LiteralPath $historyDir) {
     }
 
     $changedEvent = Register-ObjectEvent $watcher 'Changed' -Action $action
-    Write-Host "[OK] Monitor de histórico do RetroArch engatilhado com sucesso." -ForegroundColor Green
+    Write-Host "[OK] Monitor de historico do RetroArch engatilhado com sucesso." -ForegroundColor Green
 }
 
 # 2. Loop de monitoramento para Standalone e liveness

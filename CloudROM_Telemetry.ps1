@@ -1,6 +1,6 @@
 # ==============================================================================
 # CloudROM Telemetry Dashboard - Open-Source Edition
-# Com Cloud Save Sync, Multi-Disc Pre-fetch & Campanha Fixada (⭐ Pin)
+# Com Cloud Save Sync, Multi-Disc Pre-fetch & Campanha Fixada ( Pin)
 # Arthur Reis Projetos
 # ==============================================================================
 
@@ -8,15 +8,16 @@
 param (
     [string]$FilePath = '',
     [switch]$LaunchAfter = $false,
-    [switch]$DashboardOnly = $false
+    [switch]$DashboardOnly = $false,
+    [switch]$PrefetchOnly = $false
 )
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Ajustar tamanho e título da janela
+# Ajustar tamanho e titulo da janela
 try {
-    $host.UI.RawUI.WindowTitle = "Telemetria CloudCartridge - Downloads & Retenção de Jogos"
+    $host.UI.RawUI.WindowTitle = "Telemetria CloudCartridge - Downloads & Retencao de Jogos"
     if ($host.UI.RawUI.WindowSize.Width -lt 92) {
         $host.UI.RawUI.WindowSize = New-Object System.Management.Automation.Host.Size(92, 34)
     }
@@ -24,15 +25,14 @@ try {
 
 $scriptDir = $PSScriptRoot
 $configFile = Join-Path $scriptDir "config.json"
-$config = $null
-if (Test-Path -LiteralPath $configFile) {
-    try { $config = Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
-}
+$modulePath = Join-Path $scriptDir 'CloudCartridge.Core.psm1'
+Import-Module $modulePath -Force
+$config = Get-CloudCartridgeConfig -ConfigPath $configFile
 
-$baseDir = if ($config -and $config.local_roms_path) { $config.local_roms_path } else { 'Z:\_ISOS_ROMS_' }
-$gDrivePath = if ($config -and $config.google_drive_roms_path) { $config.google_drive_roms_path } else { '' }
+$baseDir = $config.local_roms_path
+$gDrivePath = $config.google_drive_roms_path
 $cloudSavesDir = if ($gDrivePath) { Join-Path $gDrivePath '_RA_SAVES' } else { '' }
-$retentionDays = if ($config -and $config.retention_days) { [int]$config.retention_days } else { 3 }
+$retentionDays = [int]$config.retention_days
 $registryFile = Join-Path $baseDir '.cache_registry.json'
 
 function Get-RegistryData {
@@ -45,9 +45,7 @@ function Get-RegistryData {
 }
 
 function Save-RegistryData ($reg) {
-    try {
-        $reg | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $registryFile -Encoding UTF8
-    } catch {}
+    try { Write-CloudCartridgeJsonAtomic -InputObject $reg -Path $registryFile -Depth 5 } catch {}
 }
 
 function Get-ProgressBar ([double]$percent, [int]$barWidth = 36) {
@@ -55,19 +53,28 @@ function Get-ProgressBar ([double]$percent, [int]$barWidth = 36) {
     $remainingWidth = $barWidth - $completedWidth
     if ($completedWidth -lt 0) { $completedWidth = 0 }
     if ($remainingWidth -lt 0) { $remainingWidth = 0 }
-    return ('█' * $completedWidth) + ('░' * $remainingWidth)
+    return ('#' * $completedWidth) + ('.' * $remainingWidth)
+}
+
+function Set-TelemetryCursor ([int]$left, [int]$top) {
+    try {
+        if (-not [Console]::IsOutputRedirected) {
+            [Console]::CursorLeft = $left
+            [Console]::CursorTop = $top
+        }
+    } catch {}
 }
 
 function Get-RemainingTimeStr ([DateTime]$lastPlayed, [bool]$isPinned) {
     if ($isPinned) {
-        return "⭐ EM CAMPANHA (FIXADO - NUNCA EXPIRA)"
+        return " EM CAMPANHA (FIXADO - NUNCA EXPIRA)"
     }
     $expireTime = $lastPlayed.AddDays($retentionDays)
     $now = Get-Date
     $diff = $expireTime - $now
 
     if ($diff.TotalSeconds -le 0) {
-        return "Expirando na próxima limpeza"
+        return "Expirando na proxima limpeza"
     }
 
     $days = $diff.Days
@@ -84,7 +91,7 @@ function Get-RemainingTimeStr ([DateTime]$lastPlayed, [bool]$isPinned) {
 }
 
 function Sync-CloudSaves ([string]$gamePath) {
-    if (-not $cloudSavesDir -or -not (Test-Path -LiteralPath $cloudSavesDir)) { return }
+    if (-not $config.enable_cloud_save_sync -or -not $cloudSavesDir -or -not (Test-Path -LiteralPath $cloudSavesDir)) { return }
     Write-Host "`n[Cloud Save Sync] Verificando saves gerados durante a partida..." -ForegroundColor Cyan
     $gameBase = [System.IO.Path]::GetFileNameWithoutExtension($gamePath)
     $cleanGameBase = $gameBase -replace '\s*\([^\)]*\)', ''
@@ -113,9 +120,11 @@ function Sync-CloudSaves ([string]$gamePath) {
                     if (-not (Test-Path -LiteralPath $destFolder)) {
                         New-Item -ItemType Directory -Path $destFolder -Force | Out-Null
                     }
-                    Copy-Item -LiteralPath $s.FullName -Destination $destFile -Force
-                    $syncedCount++
-                    Write-Host "  -> Save sincronizado na nuvem: $($s.Name)" -ForegroundColor Green
+                    $result = Copy-CloudCartridgeSaveSafely -SourcePath $s.FullName -DestinationPath $destFile -DestinationRoot $cloudSavesDir
+                    if ($result.status -ne 'unchanged') {
+                        $syncedCount++
+                        Write-Host "  -> Save sincronizado com versao protegida: $($s.Name)" -ForegroundColor Green
+                    }
                 } catch {}
             }
         }
@@ -145,14 +154,14 @@ function Check-And-PrefetchMultiDisc ([string]$gamePath) {
             Write-Host " Discos seguintes encontrados:" -ForegroundColor White
             foreach ($d in $otherDiscs) {
                 $sMB = [math]::Round($d.Length / 1MB, 1)
-                Write-Host "  • $($d.Name) ($sMB MB)" -ForegroundColor Gray
+                Write-Host "  - $($d.Name) ($sMB MB)" -ForegroundColor Gray
             }
-            Write-Host " Pré-baixando discos adicionais para evitar travamentos durante a campanha..." -ForegroundColor Cyan
+            Write-Host " Pre-baixando discos adicionais para evitar travamentos durante a campanha..." -ForegroundColor Cyan
             Write-Host "==========================================================================================" -ForegroundColor Magenta
 
             foreach ($d in $otherDiscs) {
-                Write-Host "`n -> Pré-baixando: $($d.Name)..." -ForegroundColor Yellow
-                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -FilePath $d.FullName -LaunchAfter:$false
+                Write-Host "`n -> Pre-baixando: $($d.Name)..." -ForegroundColor Yellow
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -FilePath $d.FullName -LaunchAfter:$false -PrefetchOnly
             }
         }
     }
@@ -160,7 +169,7 @@ function Check-And-PrefetchMultiDisc ([string]$gamePath) {
 
 function Draw-InstalledGamesPanel {
     Write-Host "==========================================================================================" -ForegroundColor DarkCyan
-    Write-Host " [PAINEL 2] JOGOS INSTALADOS NO PC & CONTAGEM REGRESSIVA (RETENÇÃO: $retentionDays DIAS)             " -ForegroundColor Yellow
+    Write-Host " [PAINEL 2] JOGOS INSTALADOS NO PC & CONTAGEM REGRESSIVA (RETENCAO: $retentionDays DIAS)             " -ForegroundColor Yellow
     Write-Host "==========================================================================================" -ForegroundColor DarkCyan
 
     $reg = Get-RegistryData
@@ -179,7 +188,7 @@ function Draw-InstalledGamesPanel {
                 $isPinned = [bool]$item.is_pinned
                 $remStr = Get-RemainingTimeStr $dt $isPinned
 
-                Write-Host " • " -NoNewline -ForegroundColor Green
+                Write-Host " - " -NoNewline -ForegroundColor Green
                 Write-Host "[$($item.system)] " -NoNewline -ForegroundColor Cyan
                 Write-Host "$($item.title) " -NoNewline -ForegroundColor White
                 Write-Host "($($size) MB)" -ForegroundColor Gray
@@ -195,12 +204,12 @@ function Draw-InstalledGamesPanel {
     }
 
     if ($installedCount -eq 0) {
-        Write-Host " Nenhum jogo ocupando espaço local no momento. Sua biblioteca está 100% na nuvem!" -ForegroundColor Gray
+        Write-Host " Nenhum jogo ocupando espaco local no momento. Sua biblioteca esta 100% na nuvem!" -ForegroundColor Gray
     } else {
         Write-Host "------------------------------------------------------------------------------------------" -ForegroundColor DarkGray
         Write-Host " Total em disco: $([math]::Round($totalMB, 1)) MB em $installedCount jogo(s) instalados." -ForegroundColor Green
-        Write-Host " *Jogos com estrela (⭐) estão em campanha e nunca são apagados automaticamente." -ForegroundColor Cyan
-        Write-Host " *Ao zerar o tempo, o espaço é liberado sem apagar nada da nuvem nem perder saves." -ForegroundColor DarkGray
+        Write-Host " *Jogos com estrela () estao em campanha e nunca sao apagados automaticamente." -ForegroundColor Cyan
+        Write-Host " *Ao zerar o tempo, o espaco e liberado sem apagar nada da nuvem nem perder saves." -ForegroundColor DarkGray
     }
     Write-Host "==========================================================================================" -ForegroundColor DarkCyan
 }
@@ -211,7 +220,7 @@ if ($DashboardOnly -or [string]::IsNullOrWhiteSpace($FilePath)) {
     Write-Host "==========================================================================================" -ForegroundColor Cyan
     Write-Host "          DASHBOARD DE TELEMETRIA CLOUDCARTRIDGE - OpenSource Edition                     " -ForegroundColor Yellow
     Write-Host "==========================================================================================" -ForegroundColor Cyan
-    Write-Host " Status Atual: Standby / Monitorando requisições de jogos..." -ForegroundColor Gray
+    Write-Host " Status Atual: Standby / Monitorando requisicoes de jogos..." -ForegroundColor Gray
     Write-Host ""
     Draw-InstalledGamesPanel
     Write-Host "`nPressione qualquer tecla para fechar..." -ForegroundColor Gray
@@ -228,14 +237,14 @@ $platform = Split-Path (Split-Path $FilePath -Parent) -Leaf
 Write-Host "==========================================================================================" -ForegroundColor Cyan
 Write-Host "                  TELEMETRIA CLOUDCARTRIDGE - DOWNLOAD EM TEMPO REAL                     " -ForegroundColor Yellow
 Write-Host "==========================================================================================" -ForegroundColor Cyan
-Write-Host " [PAINEL 1] ARQUIVO EM TRANSFERÊNCIA" -ForegroundColor Yellow
+Write-Host " [PAINEL 1] ARQUIVO EM TRANSFERENCIA" -ForegroundColor Yellow
 Write-Host " -----------------------------------------------------------------------------------------" -ForegroundColor DarkGray
 Write-Host " Plataforma : " -NoNewline -ForegroundColor Gray; Write-Host $platform -ForegroundColor White
 Write-Host " Arquivo    : " -NoNewline -ForegroundColor Gray; Write-Host $fileName -ForegroundColor White
 Write-Host " Tamanho    : " -NoNewline -ForegroundColor Gray; Write-Host "$totalMB MB" -ForegroundColor White
 Write-Host " Origem     : " -NoNewline -ForegroundColor Gray; Write-Host "Google Drive (Nuvem)" -ForegroundColor Cyan
 Write-Host " -----------------------------------------------------------------------------------------" -ForegroundColor DarkGray
-Write-Host " Progresso  : [Iniciando conexão de streaming...]" -ForegroundColor Yellow
+Write-Host " Progresso  : [Iniciando conexao de streaming...]" -ForegroundColor Yellow
 Write-Host " Baixado    : 0 MB de $totalMB MB" -ForegroundColor Gray
 Write-Host " Velocidade : 0 MB/s" -ForegroundColor Gray
 Write-Host " Tempo      : 0s decorridos" -ForegroundColor Gray
@@ -267,20 +276,20 @@ try {
             $etaSec = if ($speed -gt 0 -and $totalMB -gt $mbRead) { [math]::Round(($totalMB - $mbRead) / $speed, 0) } else { 0 }
             $bar = Get-ProgressBar -percent $percent -barWidth 36
 
-            [Console]::CursorLeft = 0; [Console]::CursorTop = 9
+            Set-TelemetryCursor -left 0 -top 9
             Write-Host " Progresso  : " -NoNewline -ForegroundColor Gray
             Write-Host "[$bar] " -NoNewline -ForegroundColor Green
             Write-Host "$percent%     " -ForegroundColor Yellow
 
-            [Console]::CursorLeft = 0; [Console]::CursorTop = 10
+            Set-TelemetryCursor -left 0 -top 10
             Write-Host " Baixado    : " -NoNewline -ForegroundColor Gray
             Write-Host "$mbRead MB de $totalMB MB        " -ForegroundColor White
 
-            [Console]::CursorLeft = 0; [Console]::CursorTop = 11
+            Set-TelemetryCursor -left 0 -top 11
             Write-Host " Velocidade : " -NoNewline -ForegroundColor Gray
             Write-Host "$speed MB/s        " -ForegroundColor Cyan
 
-            [Console]::CursorLeft = 0; [Console]::CursorTop = 12
+            Set-TelemetryCursor -left 0 -top 12
             Write-Host " Tempo      : " -NoNewline -ForegroundColor Gray
             Write-Host "$([math]::Round($elapsedSec, 1))s decorridos | ETA restante: $($etaSec)s     " -ForegroundColor White
         }
@@ -313,12 +322,16 @@ if ($reg.games.PSObject.Properties[$cleanPath]) {
 }
 Save-RegistryData $reg
 
-[Console]::CursorLeft = 0; [Console]::CursorTop = 13
-Write-Host "`n [STATUS] DOWNLOAD 100% CONCLUÍDO EM $([math]::Round($stopwatch.Elapsed.TotalSeconds, 1))s! O jogo está pronto." -ForegroundColor Green
+Set-TelemetryCursor -left 0 -top 13
+Write-Host "`n [STATUS] DOWNLOAD 100% CONCLUIDO EM $([math]::Round($stopwatch.Elapsed.TotalSeconds, 1))s! O jogo esta pronto." -ForegroundColor Green
 Start-Sleep -Seconds 1
 
-if ($LaunchAfter) {
+if ($config.enable_multi_disc_prefetch -and -not $PrefetchOnly) {
     Check-And-PrefetchMultiDisc $FilePath
+}
+
+if ($PrefetchOnly) {
+    exit 0
 }
 
 if ($LaunchAfter) {
@@ -335,7 +348,7 @@ if ($LaunchAfter) {
                     $argsFormatted = $emu.Arguments.Replace('{ROM}', $FilePath)
                     Start-Process -FilePath $emu.Executable -ArgumentList $argsFormatted -Wait
                     Sync-CloudSaves $FilePath
-                    Write-Host "`n[Telemetria] Partida finalizada! Retenção ativa por $retentionDays dias." -ForegroundColor Green
+                    Write-Host "`n[Telemetria] Partida finalizada! Retencao ativa por $retentionDays dias." -ForegroundColor Green
                     Start-Sleep -Seconds 2
                     exit 0
                 }
@@ -344,7 +357,7 @@ if ($LaunchAfter) {
     }
 
     $coreMappingFile = Join-Path $scriptDir "core_mapping.json"
-    $retroArchExe = if ($config -and $config.retroarch_path) { $config.retroarch_path } else { 'C:\RetroArch-Win64\retroarch.exe' }
+    $retroArchExe = $config.retroarch_path
     $coreMapping = @{}
     if (Test-Path -LiteralPath $coreMappingFile) {
         $coreMapping = Get-Content -LiteralPath $coreMappingFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -358,15 +371,15 @@ if ($LaunchAfter) {
     }
 
     Sync-CloudSaves $FilePath
-    Write-Host "`n[Telemetria] Partida finalizada! Retenção ativa por $retentionDays dias." -ForegroundColor Green
+    Write-Host "`n[Telemetria] Partida finalizada! Retencao ativa por $retentionDays dias." -ForegroundColor Green
     Start-Sleep -Seconds 2
 }
 if (-not $LaunchAfter) {
     # Modo Companheiro Ativo: Janela permanece aberta durante a partida
     Write-Host "`n==========================================================================================" -ForegroundColor DarkCyan
-    Write-Host "  [HUD COMPANHEIRO ATIVO] Jogo em execução no emulador." -ForegroundColor Cyan
-    Write-Host "  Esta janela de telemetria permanecerá aberta durante toda a sua partida." -ForegroundColor Gray
-    Write-Host "  Ao encerrar o jogo, seus saves serão enviados para a nuvem automaticamente!" -ForegroundColor Yellow
+    Write-Host "  [HUD COMPANHEIRO ATIVO] Jogo em execucao no emulador." -ForegroundColor Cyan
+    Write-Host "  Esta janela de telemetria permanecera aberta durante toda a sua partida." -ForegroundColor Gray
+    Write-Host "  Ao encerrar o jogo, seus saves serao enviados para a nuvem automaticamente!" -ForegroundColor Yellow
     Write-Host "==========================================================================================" -ForegroundColor DarkCyan
 
     $allEmuProcs = @('retroarch', 'pcsx2-qt', 'Dolphin', 'Cemu', 'rpcs3', 'citra-qt', 'duckstation-qt-x64-ReleaseLTCG')
@@ -379,7 +392,7 @@ if (-not $LaunchAfter) {
     }
 
     Sync-CloudSaves $FilePath
-    Write-Host "`n[Telemetria] Partida finalizada! Saves sincronizados e retenção renovada por $retentionDays dias." -ForegroundColor Green
-    Write-Host "Esta janela fechará em 5 segundos..." -ForegroundColor DarkGray
+    Write-Host "`n[Telemetria] Partida finalizada! Saves sincronizados e retencao renovada por $retentionDays dias." -ForegroundColor Green
+    Write-Host "Esta janela fechara em 5 segundos..." -ForegroundColor DarkGray
     Start-Sleep -Seconds 5
 }

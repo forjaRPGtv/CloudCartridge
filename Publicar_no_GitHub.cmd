@@ -39,8 +39,9 @@ if %errorlevel% equ 0 (
     echo =========================================================================
 ) else (
     echo.
-    echo [Aviso] Se o envio falhou por diferencas de branch, tentando com force-push...
-    git push -u origin main --force
+    echo [ERRO] O envio falhou. Nenhum force-push sera executado.
+    echo Verifique o remoto e integre divergencias com git fetch e merge/rebase seguro.
+    exit /b 1
 )
 
 echo.

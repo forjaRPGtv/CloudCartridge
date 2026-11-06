@@ -14,20 +14,19 @@ $ErrorActionPreference = 'Stop'
 
 $scriptDir = $PSScriptRoot
 $configFile = Join-Path $scriptDir "config.json"
-$config = $null
-if (Test-Path -LiteralPath $configFile) {
-    try { $config = Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
-}
+$modulePath = Join-Path $scriptDir 'CloudCartridge.Core.psm1'
+Import-Module $modulePath -Force
+$config = Get-CloudCartridgeConfig -ConfigPath $configFile
 
-$baseDir = if ($config -and $config.local_roms_path) { $config.local_roms_path } else { 'Z:\_ISOS_ROMS_' }
-$gDrivePath = if ($config -and $config.google_drive_roms_path) { $config.google_drive_roms_path } else { '' }
+$baseDir = $config.local_roms_path
+$gDrivePath = $config.google_drive_roms_path
 $cloudSavesDir = if ($gDrivePath) { Join-Path $gDrivePath '_RA_SAVES' } else { '' }
-$retentionDays = if ($config -and $config.retention_days) { [int]$config.retention_days } else { 3 }
+$retentionDays = [int]$config.retention_days
 $registryFile = Join-Path $baseDir '.cache_registry.json'
 $coreMappingFile = Join-Path $scriptDir "core_mapping.json"
 $standaloneFile = Join-Path $scriptDir "standalone_emulators.json"
 $telemetryScript = Join-Path $scriptDir "CloudROM_Telemetry.ps1"
-$retroArchExe = if ($config -and $config.retroarch_path) { $config.retroarch_path } else { 'C:\RetroArch-Win64\retroarch.exe' }
+$retroArchExe = $config.retroarch_path
 
 $coreMapping = @{}
 if (Test-Path -LiteralPath $coreMappingFile) {
@@ -47,11 +46,11 @@ function Get-CacheRegistry {
 }
 
 function Save-CacheRegistry ($reg) {
-    try { $reg | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $registryFile -Encoding UTF8 } catch {}
+    Write-CloudCartridgeJsonAtomic -InputObject $reg -Path $registryFile -Depth 5
 }
 
 function Sync-CloudSaves ([string]$gamePath) {
-    if (-not $cloudSavesDir -or -not (Test-Path -LiteralPath $cloudSavesDir)) { return }
+    if (-not $config.enable_cloud_save_sync -or -not $cloudSavesDir -or -not (Test-Path -LiteralPath $cloudSavesDir)) { return }
     Write-Host "`n[Cloud Save Sync] Verificando saves gerados durante a partida..." -ForegroundColor Cyan
     $gameBase = [System.IO.Path]::GetFileNameWithoutExtension($gamePath)
     $cleanGameBase = $gameBase -replace '\s*\([^\)]*\)', ''
@@ -80,9 +79,11 @@ function Sync-CloudSaves ([string]$gamePath) {
                     if (-not (Test-Path -LiteralPath $destFolder)) {
                         New-Item -ItemType Directory -Path $destFolder -Force | Out-Null
                     }
-                    Copy-Item -LiteralPath $s.FullName -Destination $destFile -Force
-                    $syncedCount++
-                    Write-Host "  -> Save sincronizado na nuvem: $($s.Name)" -ForegroundColor Green
+                    $result = Copy-CloudCartridgeSaveSafely -SourcePath $s.FullName -DestinationPath $destFile -DestinationRoot $cloudSavesDir
+                    if ($result.status -ne 'unchanged') {
+                        $syncedCount++
+                        Write-Host "  -> Save sincronizado com versao protegida: $($s.Name)" -ForegroundColor Green
+                    }
                 } catch {}
             }
         }
@@ -94,6 +95,10 @@ function Sync-CloudSaves ([string]$gamePath) {
 }
 
 function Invoke-CachePurge {
+    if (-not $config.cleanup_enabled) {
+        Write-Host "`n[Auto-Purge] Limpeza automatica desabilitada na configuracao.`n" -ForegroundColor Gray
+        return
+    }
     Write-Host "`n[Auto-Purge] Verificando jogos com mais de $retentionDays dias sem uso..." -ForegroundColor Cyan
     $reg = Get-CacheRegistry
     $now = Get-Date
@@ -107,7 +112,7 @@ function Invoke-CachePurge {
             if (-not $item.last_played) { continue }
 
             if ($item.is_pinned -eq $true) {
-                Write-Host "  ⭐ Jogo em campanha (protegido): $($item.title)" -ForegroundColor Green
+                Write-Host "   Jogo em campanha (protegido): $($item.title)" -ForegroundColor Green
                 continue
             }
 
@@ -116,25 +121,31 @@ function Invoke-CachePurge {
 
             if ($diff.TotalDays -ge $retentionDays) {
                 $targetFile = $key
-                if (Test-Path -LiteralPath $targetFile) {
+                $purged = $false
+                if ((Test-CloudCartridgePathWithinRoot -Path $targetFile -Root $baseDir) -and
+                    $targetFile -notlike '*\_RA_*' -and
+                    (Test-Path -LiteralPath $targetFile -PathType Leaf)) {
                     try {
                         $p = Start-Process -FilePath "attrib.exe" -ArgumentList "+u", "-p", "`"$targetFile`"" -NoNewWindow -Wait -PassThru
                         if ($p.ExitCode -eq 0) {
                             $size = if ($item.size_mb) { [double]$item.size_mb } else { 0 }
                             $freedMB += $size
                             $purgedCount++
-                            Write-Host "  -> Espaço liberado no PC: $($item.title) ($($diff.Days) dias sem jogar)" -ForegroundColor Yellow
+                            $purged = $true
+                            Write-Host "  -> Espaco liberado no PC: $($item.title) ($($diff.Days) dias sem jogar)" -ForegroundColor Yellow
                         }
                     } catch {}
                 }
-                $item.status = "cloud_only"
+                if ($purged) {
+                    $item.status = "cloud_only"
+                }
             }
         }
     }
 
     Save-CacheRegistry $reg
     if ($purgedCount -gt 0) {
-        Write-Host "[Auto-Purge] Limpeza concluída: $purgedCount jogo(s) liberados (~$([math]::Round($freedMB, 1)) MB economizados).`n" -ForegroundColor Green
+        Write-Host "[Auto-Purge] Limpeza concluida: $purgedCount jogo(s) liberados (~$([math]::Round($freedMB, 1)) MB economizados).`n" -ForegroundColor Green
     } else {
         Write-Host "[Auto-Purge] Nenhum jogo expirado no momento. Cache 100% otimizado.`n" -ForegroundColor Gray
     }
@@ -142,7 +153,7 @@ function Invoke-CachePurge {
 
 function Hydrate-GameFile ([string]$filePath) {
     if (-not (Test-Path -LiteralPath $filePath)) {
-        throw "Arquivo não encontrado: $filePath"
+        throw "Arquivo nao encontrado: $filePath"
     }
 
     if (Test-Path -LiteralPath $telemetryScript) {
@@ -158,13 +169,13 @@ function Start-GameWithEmulator ([string]$filePath) {
         $emu = $standaloneMapping.$platform
         if (Test-Path -LiteralPath $emu.Executable) {
             Write-Host "Emulador Standalone Detectado: $($emu.EmulatorName)" -ForegroundColor Green
-            Write-Host "Executando partida... (o terminal retornará ao fechar o jogo)" -ForegroundColor Yellow
+            Write-Host "Executando partida... (o terminal retornara ao fechar o jogo)" -ForegroundColor Yellow
 
             $argsFormatted = $emu.Arguments.Replace('{ROM}', $filePath)
             $proc = Start-Process -FilePath $emu.Executable -ArgumentList $argsFormatted -Wait -PassThru
 
             Sync-CloudSaves $filePath
-            Write-Host "`n[CloudROM] Partida encerrada! Retenção ativa por $retentionDays dias." -ForegroundColor Green
+            Write-Host "`n[CloudROM] Partida encerrada! Retencao ativa por $retentionDays dias." -ForegroundColor Green
             return
         }
     }
@@ -174,16 +185,16 @@ function Start-GameWithEmulator ([string]$filePath) {
     if ($coreInfo -and (Test-Path -LiteralPath $coreInfo.CorePath) -and (Test-Path -LiteralPath $retroArchExe)) {
         Write-Host "Emulador: RetroArch" -ForegroundColor Green
         Write-Host "Core: $($coreInfo.CoreName)" -ForegroundColor Gray
-        Write-Host "Executando partida... (o terminal retornará ao fechar o jogo)" -ForegroundColor Yellow
+        Write-Host "Executando partida... (o terminal retornara ao fechar o jogo)" -ForegroundColor Yellow
 
         $proc = Start-Process -FilePath $retroArchExe -ArgumentList "-L", "`"$($coreInfo.CorePath)`"", "`"$filePath`"" -Wait -PassThru
     } else {
-        Write-Host "Iniciando com o aplicativo padrão do sistema..." -ForegroundColor Yellow
+        Write-Host "Iniciando com o aplicativo padrao do sistema..." -ForegroundColor Yellow
         $proc = Start-Process -FilePath $filePath -Wait -PassThru
     }
 
     Sync-CloudSaves $filePath
-    Write-Host "`n[CloudROM] Partida encerrada! Retenção ativa por $retentionDays dias." -ForegroundColor Green
+    Write-Host "`n[CloudROM] Partida encerrada! Retencao ativa por $retentionDays dias." -ForegroundColor Green
 }
 
 if ($PurgeOnly) {
@@ -204,15 +215,15 @@ function Show-MainMenu {
     Write-Host "       CloudROM Manager PRO - Jogos na Nuvem & Telemetria        " -ForegroundColor Yellow
     Write-Host "                  Open-Source Edition                            " -ForegroundColor Gray
     Write-Host "=================================================================" -ForegroundColor Cyan
-    Write-Host " [1] Buscar Jogo por Nome (Pesquisa Rápida em todos os consoles)" -ForegroundColor White
+    Write-Host " [1] Buscar Jogo por Nome (Pesquisa Rapida em todos os consoles)" -ForegroundColor White
     Write-Host " [2] Navegar por Console / Plataforma" -ForegroundColor White
     Write-Host " [3] Ver Jogos em Cache & Prazos (Abrir Dashboard de Telemetria)" -ForegroundColor White
-    Write-Host " [4] ⭐ Fixar / Desafixar Jogo em Campanha (Nunca expirar)" -ForegroundColor Yellow
-    Write-Host " [5] Limpar Cache Agora (Liberar espaço de jogos > $retentionDays dias)" -ForegroundColor White
+    Write-Host " [4]  Fixar / Desafixar Jogo em Campanha (Nunca expirar)" -ForegroundColor Yellow
+    Write-Host " [5] Limpar Cache Agora (Liberar espaco de jogos > $retentionDays dias)" -ForegroundColor White
     Write-Host " [0] Sair" -ForegroundColor Gray
     Write-Host "=================================================================" -ForegroundColor Cyan
     
-    $choice = Read-Host "Escolha uma opção"
+    $choice = Read-Host "Escolha uma opcao"
     return $choice
 }
 
@@ -242,7 +253,7 @@ while ($true) {
                     }
                     Write-Host " [0] Cancelar" -ForegroundColor Gray
 
-                    $pick = Read-Host "`nEscolha o número do jogo para jogar"
+                    $pick = Read-Host "`nEscolha o numero do jogo para jogar"
                     $pickIdx = [int]$pick - 1
                     if ($pickIdx -ge 0 -and $pickIdx -lt $found.Count) {
                         $selectedGame = $found[$pickIdx].FullName
@@ -255,7 +266,7 @@ while ($true) {
             }
         }
         '2' {
-            Write-Host "`nConsoles Disponíveis:" -ForegroundColor Cyan
+            Write-Host "`nConsoles Disponiveis:" -ForegroundColor Cyan
             $platforms = Get-ChildItem -LiteralPath $baseDir -Directory |
                 Where-Object { $_.Name -notlike '_RA_*' -and $_.Name -notlike '_*' -and $_.Name -ne 'cheats' -and $_.Name -ne 'Arcade' -and $_.Name -ne 'Vectrex' -and $_.Name -ne 'Jaguar' } |
                 Sort-Object Name
@@ -300,7 +311,7 @@ while ($true) {
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $telemetryScript -DashboardOnly
         }
         '4' {
-            Write-Host "`n=== FIXAR / DESAFIXAR JOGO EM CAMPANHA (⭐ NUNCA EXPIRA) ===" -ForegroundColor Yellow
+            Write-Host "`n=== FIXAR / DESAFIXAR JOGO EM CAMPANHA ( NUNCA EXPIRA) ===" -ForegroundColor Yellow
             $reg = Get-CacheRegistry
             if (-not $reg.games -or $reg.games.PSObject.Properties.Count -eq 0) {
                 Write-Host "Nenhum jogo em cache local no momento." -ForegroundColor Gray
@@ -321,19 +332,19 @@ while ($true) {
                 } else {
                     for ($m = 0; $m -lt $activeList.Count; $m++) {
                         $act = $activeList[$m]
-                        $star = if ($act.Pinned) { "⭐ [FIXADO]" } else { "   [NORMAL]" }
+                        $star = if ($act.Pinned) { " [FIXADO]" } else { "   [NORMAL]" }
                         Write-Host " [$($m + 1)] $star [$($act.System)] $($act.Title)" -ForegroundColor White
                     }
                     Write-Host " [0] Cancelar" -ForegroundColor Gray
 
-                    $togglePick = Read-Host "`nEscolha o número do jogo para alternar o status de campanha"
+                    $togglePick = Read-Host "`nEscolha o numero do jogo para alternar o status de campanha"
                     $tIdx = [int]$togglePick - 1
                     if ($tIdx -ge 0 -and $tIdx -lt $activeList.Count) {
                         $targetKey = $activeList[$tIdx].Key
                         $currentPin = [bool]$reg.games.$targetKey.is_pinned
                         $reg.games.$targetKey.is_pinned = (-not $currentPin)
                         Save-CacheRegistry $reg
-                        $newStatus = if (-not $currentPin) { "⭐ FIXADO EM CAMPANHA (NUNCA EXPIRA)" } else { "NORMAL (Expira em $retentionDays dias)" }
+                        $newStatus = if (-not $currentPin) { " FIXADO EM CAMPANHA (NUNCA EXPIRA)" } else { "NORMAL (Expira em $retentionDays dias)" }
                         Write-Host "`nStatus atualizado: $newStatus!" -ForegroundColor Green
                         Start-Sleep -Seconds 2
                     }
@@ -346,7 +357,7 @@ while ($true) {
             [void][System.Console]::ReadKey($true)
         }
         '0' {
-            Write-Host "`nAté logo!" -ForegroundColor Green
+            Write-Host "`nAte logo!" -ForegroundColor Green
             exit 0
         }
     }
