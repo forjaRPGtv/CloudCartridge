@@ -29,10 +29,11 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 - Save Guardian usa manifesto/hash-base, preserva conflitos dos dois lados e reconhece caminho legado do RetroArch.
 - Reconcile usa lock recuperável e bloqueia concorrência com Cloud Sync nativo do RetroArch.
 - Fila offline de saves é durável, deduplicada e retomada quando o destino volta.
+- Overrides efetivos, identidade core/região/formato e restauração versionada estão cobertos.
 
 ## Evidência atual
 
-- `Testar_CloudCartridge.cmd`: 25 aprovados, 0 falhas.
+- `Testar_CloudCartridge.cmd`: 28 aprovados, 0 falhas.
 - Smoke real em PowerShell 5.1 do Launcher e Telemetria com fixture temporária.
 - `doctor --json`: RetroArch detectado, 45/46 mapeamentos de core detectados, 6/6 mapeamentos standalone (5 executáveis únicos).
 - Alertas atuais: `config.json` local ausente, destino de Cloud Save não configurado e Wii U ainda com mapeamento `DETECT`.
@@ -47,7 +48,7 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 
 ## Próxima ação
 
-Ampliar o Save Guardian para overrides de core/diretório/jogo, mudança de core/nome/formato e restauração explícita. Depois fechar os gates restantes da Fase 1 e Fase 2 antes de playlists.
+Adicionar adaptadores e teste de leitura por emulador; depois auditar formalmente os gates da Fase 1 e Fase 2 antes de playlists.
 
 Comando de retomada:
 

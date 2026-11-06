@@ -98,6 +98,51 @@ function Read-CloudCartridgeRetroArchSaveSettings {
     return [PSCustomObject]$effective
 }
 
+function Get-CloudCartridgeRetroArchConfigChain {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseConfigPath,
+        [Parameter(Mandatory = $true)][string]$CoreName,
+        [Parameter(Mandatory = $true)][string]$ContentDirectoryName,
+        [Parameter(Mandatory = $true)][string]$GameName
+    )
+    $retroArchRoot = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($BaseConfigPath))
+    $coreConfigRoot = Join-Path (Join-Path $retroArchRoot 'config') $CoreName
+    $candidates = @(
+        $BaseConfigPath,
+        (Join-Path $coreConfigRoot "$CoreName.cfg"),
+        (Join-Path $coreConfigRoot "$ContentDirectoryName.cfg"),
+        (Join-Path $coreConfigRoot "$GameName.cfg")
+    )
+    return @($candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object { [System.IO.Path]::GetFullPath($_) })
+}
+
+function Compare-CloudCartridgeSaveIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Previous,
+        [Parameter(Mandatory = $true)]$Current
+    )
+    $changed = @()
+    foreach ($field in @('game_id', 'emulator', 'core_name', 'core_version', 'region', 'format')) {
+        if ([string]$Previous.$field -ne [string]$Current.$field) { $changed += $field }
+    }
+    $status = 'compatible'
+    $copyMigrationAllowed = $true
+    if (@($changed | Where-Object { $_ -in @('game_id', 'emulator', 'region', 'format') }).Count -gt 0) {
+        $status = 'format_incompatible'
+        $copyMigrationAllowed = $false
+    } elseif ('core_name' -in $changed -or 'core_version' -in $changed) {
+        $status = 'core_changed'
+    }
+    return [PSCustomObject]@{
+        status = $status
+        changed_fields = $changed
+        copy_migration_allowed = $copyMigrationAllowed
+        requires_read_test = $changed.Count -gt 0
+    }
+}
+
 function Get-CloudCartridgeNativeSaveSyncState {
     [CmdletBinding()]
     param(
@@ -249,6 +294,48 @@ function Copy-CloudCartridgeSnapshot {
         Remove-Item -LiteralPath $old.FullName -Force
     }
     return $snapshotPath
+}
+
+function Get-CloudCartridgeSaveVersions {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$HistoryRoot,
+        [Parameter(Mandatory = $true)][string]$SaveKey
+    )
+    $safeKey = $SaveKey -replace '[^a-zA-Z0-9._-]', '_'
+    $versionRoot = Join-Path $HistoryRoot $safeKey
+    if (-not (Test-Path -LiteralPath $versionRoot -PathType Container)) { return @() }
+    return @(Get-ChildItem -LiteralPath $versionRoot -File | Where-Object { $_.Name -notlike '*.partial*' } | Sort-Object LastWriteTimeUtc -Descending | ForEach-Object {
+        $fingerprint = Get-CloudCartridgeSaveFingerprint -Path $_.FullName
+        [PSCustomObject]@{ path = $_.FullName; sha256 = $fingerprint.sha256; size = $fingerprint.size; created_utc = $_.LastWriteTimeUtc.ToString('o') }
+    })
+}
+
+function Restore-CloudCartridgeSaveVersion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$VersionPath,
+        [Parameter(Mandatory = $true)][string]$HistoryRoot,
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [Parameter(Mandatory = $true)][string]$DestinationRoot,
+        [Parameter(Mandatory = $true)][string]$SaveKey,
+        [switch]$Apply
+    )
+    if (-not (Test-CloudCartridgePathWithinRoot -Path $VersionPath -Root $HistoryRoot)) { throw 'Versao selecionada fora do historico permitido.' }
+    if (-not (Test-Path -LiteralPath $VersionPath -PathType Leaf)) { throw 'Versao selecionada nao encontrada.' }
+    if (-not (Test-CloudCartridgePathWithinRoot -Path $DestinationPath -Root $DestinationRoot)) { throw 'Destino de restauracao fora da raiz permitida.' }
+    $version = Get-CloudCartridgeSaveFingerprint -Path $VersionPath
+    $result = [ordered]@{ applied = $false; dry_run = -not $Apply; version_path = $VersionPath; destination_path = $DestinationPath; sha256 = $version.sha256; backup_path = $null }
+    if (-not $Apply) { return [PSCustomObject]$result }
+    $backupPath = Copy-CloudCartridgeSnapshot -SourcePath $DestinationPath -HistoryRoot $HistoryRoot -SaveKey "$SaveKey-before-restore"
+    $copy = Copy-CloudCartridgeSaveSafely -SourcePath $VersionPath -DestinationPath $DestinationPath -DestinationRoot $DestinationRoot
+    $restored = Get-CloudCartridgeSaveFingerprint -Path $DestinationPath
+    if ($restored.sha256 -ne $version.sha256) { throw 'Hash da restauracao nao confere com a versao selecionada.' }
+    $result.applied = $true
+    $result.dry_run = $false
+    $result.backup_path = $backupPath
+    $result.copy_status = $copy.status
+    return [PSCustomObject]$result
 }
 
 function Invoke-CloudCartridgeSaveReconcile {
@@ -497,12 +584,16 @@ Export-ModuleMember -Function @(
     'Get-CloudCartridgeSaveFingerprint',
     'Get-CloudCartridgeSaveDecision',
     'Read-CloudCartridgeRetroArchSaveSettings',
+    'Get-CloudCartridgeRetroArchConfigChain',
+    'Compare-CloudCartridgeSaveIdentity',
     'Get-CloudCartridgeNativeSaveSyncState',
     'Enter-CloudCartridgeSaveLock',
     'Exit-CloudCartridgeSaveLock',
     'Find-CloudCartridgeSaveCandidates',
     'Invoke-CloudCartridgeSaveReconcile',
     'Invoke-CloudCartridgeSaveReconcileGuarded',
+    'Get-CloudCartridgeSaveVersions',
+    'Restore-CloudCartridgeSaveVersion',
     'Add-CloudCartridgeSaveSyncJob',
     'Get-CloudCartridgeSaveSyncJobs',
     'Invoke-CloudCartridgeSaveSyncQueue'

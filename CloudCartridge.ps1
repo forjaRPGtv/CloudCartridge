@@ -353,7 +353,23 @@ switch ($Command.ToLowerInvariant()) {
                     Write-Result ([PSCustomObject]@{ applied = $true; dry_run = $false; results = $syncResults })
                 }
             }
-            default { throw 'Use: cloudcartridge save doctor|reconcile|queue|jobs|sync [opcoes]' }
+            'versions' {
+                $historyRoot = Get-ArgumentValue '--history'
+                $saveKey = Get-ArgumentValue '--key'
+                if ([string]::IsNullOrWhiteSpace($historyRoot) -or [string]::IsNullOrWhiteSpace($saveKey)) { throw 'Use: cloudcartridge save versions --history <pasta> --key <id> [--json]' }
+                Write-Result @(Get-CloudCartridgeSaveVersions -HistoryRoot $historyRoot -SaveKey $saveKey)
+            }
+            'restore' {
+                $versionPath = Get-ArgumentValue '--version'
+                $historyRoot = Get-ArgumentValue '--history'
+                $destinationPath = Get-ArgumentValue '--destination'
+                $destinationRoot = Get-ArgumentValue '--destination-root'
+                $saveKey = Get-ArgumentValue '--key'
+                $requiredArguments = @($versionPath, $historyRoot, $destinationPath, $destinationRoot, $saveKey)
+                if (@($requiredArguments | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) { throw 'Use: cloudcartridge save restore --version <arquivo> --history <pasta> --destination <arquivo> --destination-root <pasta> --key <id> [--yes] [--json]' }
+                Write-Result (Restore-CloudCartridgeSaveVersion -VersionPath $versionPath -HistoryRoot $historyRoot -DestinationPath $destinationPath -DestinationRoot $destinationRoot -SaveKey $saveKey -Apply:$confirmed)
+            }
+            default { throw 'Use: cloudcartridge save doctor|reconcile|queue|jobs|sync|versions|restore [opcoes]' }
         }
     }
     default {

@@ -354,6 +354,55 @@ try {
         Assert-True ($cliReport.status -eq 'found_legacy_save' -and $cliReport.path_changed) 'CLI save doctor nao reportou mudanca de caminho.'
     }
 
+    Invoke-Test 'RetroArch override chain resolves game-specific save path' {
+        $overrideRoot = Join-Path $tempRoot 'override-chain'
+        $baseConfig = Join-Path $overrideRoot 'retroarch.cfg'
+        $coreRoot = Join-Path $overrideRoot 'config\Test Core'
+        New-Item -ItemType Directory -Path $coreRoot -Force | Out-Null
+        $paths = @('base-saves', 'core-saves', 'directory-saves', 'game-saves') | ForEach-Object { Join-Path $overrideRoot $_ }
+        [System.IO.File]::WriteAllText($baseConfig, "savefile_directory = `"$($paths[0])`"", [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText((Join-Path $coreRoot 'Test Core.cfg'), "savefile_directory = `"$($paths[1])`"", [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText((Join-Path $coreRoot 'Roms.cfg'), "savefile_directory = `"$($paths[2])`"", [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText((Join-Path $coreRoot 'Fixture Game.cfg'), "savefile_directory = `"$($paths[3])`"", [System.Text.Encoding]::UTF8)
+        $chain = @(Get-CloudCartridgeRetroArchConfigChain -BaseConfigPath $baseConfig -CoreName 'Test Core' -ContentDirectoryName 'Roms' -GameName 'Fixture Game')
+        $effective = Read-CloudCartridgeRetroArchSaveSettings -ConfigPaths $chain
+        Assert-True ($chain.Count -eq 4 -and $effective.savefile_directory -eq $paths[3]) 'Override por jogo nao prevaleceu.'
+    }
+
+    Invoke-Test 'Save identity detects core change and incompatible format' {
+        $previous = [PSCustomObject]@{ game_id = 'SLUS-00001'; emulator = 'RetroArch'; core_name = 'Core A'; core_version = '1.0'; region = 'US'; format = 'srm' }
+        $renamed = [PSCustomObject]@{ game_id = 'SLUS-00001'; emulator = 'RetroArch'; core_name = 'Core B'; core_version = '1.1'; region = 'US'; format = 'srm' }
+        $coreChange = Compare-CloudCartridgeSaveIdentity -Previous $previous -Current $renamed
+        Assert-True ($coreChange.status -eq 'core_changed' -and $coreChange.copy_migration_allowed -and $coreChange.requires_read_test) 'Mudanca de core nao foi classificada para migracao testada.'
+        $otherRegion = [PSCustomObject]@{ game_id = 'SLES-00001'; emulator = 'RetroArch'; core_name = 'Core B'; core_version = '1.1'; region = 'EU'; format = 'mcd' }
+        $incompatible = Compare-CloudCartridgeSaveIdentity -Previous $previous -Current $otherRegion
+        Assert-True ($incompatible.status -eq 'format_incompatible' -and -not $incompatible.copy_migration_allowed) 'Regiao/formato incompativel foi aceito.'
+    }
+
+    Invoke-Test 'Explicit save restore previews and backs up current version' {
+        $restoreRoot = Join-Path $tempRoot 'restore-version'
+        $historyRoot = Join-Path $restoreRoot 'history'
+        $versionRoot = Join-Path $historyRoot 'restore-game'
+        $destinationRoot = Join-Path $restoreRoot 'current'
+        $versionPath = Join-Path $versionRoot 'selected.srm'
+        $destinationPath = Join-Path $destinationRoot 'game.srm'
+        New-Item -ItemType Directory -Path $versionRoot, $destinationRoot -Force | Out-Null
+        [System.IO.File]::WriteAllText($versionPath, 'selected-progress', [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText($destinationPath, 'current-progress', [System.Text.Encoding]::UTF8)
+        $versions = @(Get-CloudCartridgeSaveVersions -HistoryRoot $historyRoot -SaveKey 'restore-game')
+        Assert-True ($versions.Count -eq 1 -and $versions[0].path -eq $versionPath) 'Versao selecionavel nao foi listada.'
+        $preview = Restore-CloudCartridgeSaveVersion -VersionPath $versionPath -HistoryRoot $historyRoot -DestinationPath $destinationPath -DestinationRoot $destinationRoot -SaveKey 'restore-game'
+        Assert-True ($preview.dry_run -and (Get-Content -LiteralPath $destinationPath -Raw) -eq 'current-progress') 'Preview alterou save atual.'
+        $cliOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.ps1') save restore --version $versionPath --history $historyRoot --destination $destinationPath --destination-root $destinationRoot --key restore-game --json 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "CLI save restore falhou: $($cliOutput -join ' ')"
+        $cliPreview = ($cliOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($cliPreview.dry_run -and -not $cliPreview.applied -and (Get-Content -LiteralPath $destinationPath -Raw) -eq 'current-progress') 'CLI restore alterou save sem --yes.'
+        $restored = Restore-CloudCartridgeSaveVersion -VersionPath $versionPath -HistoryRoot $historyRoot -DestinationPath $destinationPath -DestinationRoot $destinationRoot -SaveKey 'restore-game' -Apply
+        Assert-True ($restored.applied -and (Get-Content -LiteralPath $destinationPath -Raw) -eq 'selected-progress') 'Versao selecionada nao foi restaurada.'
+        Assert-True (Test-Path -LiteralPath $restored.backup_path -PathType Leaf) 'Backup anterior a restauracao ausente.'
+        Assert-True ((Get-Content -LiteralPath $restored.backup_path -Raw) -eq 'current-progress') 'Backup anterior a restauracao incorreto.'
+    }
+
     Invoke-Test 'Save lock blocks concurrency and recovers dead owner' {
         $lockRoot = Join-Path $tempRoot 'save-locks'
         $first = Enter-CloudCartridgeSaveLock -LockRoot $lockRoot -SaveKey 'game|core|region'
