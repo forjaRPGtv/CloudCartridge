@@ -354,6 +354,50 @@ try {
         Assert-True ($cliReport.status -eq 'found_legacy_save' -and $cliReport.path_changed) 'CLI save doctor nao reportou mudanca de caminho.'
     }
 
+    Invoke-Test 'Save lock blocks concurrency and recovers dead owner' {
+        $lockRoot = Join-Path $tempRoot 'save-locks'
+        $first = Enter-CloudCartridgeSaveLock -LockRoot $lockRoot -SaveKey 'game|core|region'
+        Assert-True $first.acquired 'Primeiro lock nao foi adquirido.'
+        $second = Enter-CloudCartridgeSaveLock -LockRoot $lockRoot -SaveKey 'game|core|region'
+        Assert-True (-not $second.acquired) 'Segundo processo logico furou o lock.'
+        Assert-True (-not (Exit-CloudCartridgeSaveLock -LockPath $first.lock_path -Token 'token-incorreto')) 'Token incorreto liberou lock.'
+        Assert-True (Exit-CloudCartridgeSaveLock -LockPath $first.lock_path -Token $first.token) 'Dono nao liberou lock.'
+
+        $stale = Enter-CloudCartridgeSaveLock -LockRoot $lockRoot -SaveKey 'stale-save'
+        $stalePayload = [PSCustomObject]@{ token = $stale.token; owner_pid = 2147483646; acquired_utc = [DateTime]::UtcNow.AddDays(-1).ToString('o'); save_key = 'stale-save' }
+        [System.IO.File]::WriteAllText($stale.lock_path, ($stalePayload | ConvertTo-Json -Compress), [System.Text.Encoding]::UTF8)
+        $recovered = Enter-CloudCartridgeSaveLock -LockRoot $lockRoot -SaveKey 'stale-save'
+        Assert-True ($recovered.acquired -and $recovered.recovered_stale) 'Lock de PID morto nao foi recuperado.'
+        Assert-True (Exit-CloudCartridgeSaveLock -LockPath $recovered.lock_path -Token $recovered.token) 'Lock recuperado nao foi liberado.'
+    }
+
+    Invoke-Test 'Native RetroArch sync conflict is blocked' {
+        $syncConfig = Join-Path $tempRoot 'native-sync.cfg'
+        [System.IO.File]::WriteAllText($syncConfig, "cloud_sync_enable = `"true`"`ncloud_sync_sync_saves = `"true`"", [System.Text.Encoding]::UTF8)
+        $conflict = Get-CloudCartridgeNativeSaveSyncState -ConfigPaths @($syncConfig) -CloudCartridgeSyncEnabled $true
+        Assert-True ($conflict.conflict -and $conflict.action -eq 'block_double_sync') 'Dois motores de sync foram aceitos.'
+        $nativeOnly = Get-CloudCartridgeNativeSaveSyncState -ConfigPaths @($syncConfig) -CloudCartridgeSyncEnabled $false
+        Assert-True (-not $nativeOnly.conflict) 'Sync nativo isolado foi marcado como conflito.'
+
+        $guardRoot = Join-Path $tempRoot 'guarded-sync'
+        $localRoot = Join-Path $guardRoot 'local'
+        $remoteRoot = Join-Path $guardRoot 'remote'
+        $localSave = Join-Path $localRoot 'game.srm'
+        $remoteSave = Join-Path $remoteRoot 'game.srm'
+        New-Item -ItemType Directory -Path $localRoot, $remoteRoot -Force | Out-Null
+        [System.IO.File]::WriteAllText($localSave, 'progress', [System.Text.Encoding]::UTF8)
+        $blocked = $false
+        try {
+            Invoke-CloudCartridgeSaveReconcileGuarded -SaveKey 'guarded' -LocalPath $localSave -RemotePath $remoteSave -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath (Join-Path $guardRoot 'manifest.json') -HistoryRoot (Join-Path $guardRoot 'history') -RetroArchConfigPaths @($syncConfig) -CloudCartridgeSyncEnabled $true -Apply | Out-Null
+        } catch { $blocked = $true }
+        Assert-True $blocked 'Reconciliacao ignorou conflito de dois motores.'
+        Assert-True (-not (Test-Path -LiteralPath $remoteSave)) 'Bloqueio ainda gravou save remoto.'
+
+        $allowed = Invoke-CloudCartridgeSaveReconcileGuarded -SaveKey 'guarded' -LocalPath $localSave -RemotePath $remoteSave -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath (Join-Path $guardRoot 'manifest.json') -HistoryRoot (Join-Path $guardRoot 'history') -RetroArchConfigPaths @($syncConfig) -CloudCartridgeSyncEnabled $false -Apply
+        Assert-True ($allowed.applied -and (Test-Path -LiteralPath $remoteSave)) 'Reconciliacao segura nao foi aplicada.'
+        Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $guardRoot '.save-locks') -Filter '*.lock' -ErrorAction SilentlyContinue).Count -eq 0) 'Lock permaneceu apos reconciliacao.'
+    }
+
     Invoke-Test 'Publish script has no force push' {
         $publishText = Get-Content -LiteralPath (Join-Path $repoRoot 'Publicar_no_GitHub.cmd') -Raw
         Assert-True ($publishText -notmatch 'push[^\r\n]*--force') 'Force push ainda presente.'

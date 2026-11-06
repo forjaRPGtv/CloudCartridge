@@ -98,6 +98,81 @@ function Read-CloudCartridgeRetroArchSaveSettings {
     return [PSCustomObject]$effective
 }
 
+function Get-CloudCartridgeNativeSaveSyncState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string[]]$ConfigPaths,
+        [bool]$CloudCartridgeSyncEnabled = $true
+    )
+    $nativeEnabled = $false
+    $evidence = @()
+    foreach ($configPath in $ConfigPaths) {
+        if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { continue }
+        foreach ($line in Get-Content -LiteralPath $configPath -Encoding UTF8) {
+            if ($line -match '^\s*(cloud_sync_enable|cloud_sync_sync_saves)\s*=\s*"?true"?\s*$') {
+                $nativeEnabled = $true
+                $evidence += [PSCustomObject]@{ config_path = [System.IO.Path]::GetFullPath($configPath); setting = $matches[1] }
+            }
+        }
+    }
+    return [PSCustomObject]@{
+        native_sync_enabled = $nativeEnabled
+        cloudcartridge_sync_enabled = $CloudCartridgeSyncEnabled
+        conflict = $nativeEnabled -and $CloudCartridgeSyncEnabled
+        action = if ($nativeEnabled -and $CloudCartridgeSyncEnabled) { 'block_double_sync' } else { 'none' }
+        evidence = $evidence
+    }
+}
+
+function Enter-CloudCartridgeSaveLock {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$LockRoot,
+        [Parameter(Mandatory = $true)][string]$SaveKey
+    )
+    New-Item -ItemType Directory -Path $LockRoot -Force | Out-Null
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $keyHash = (($algorithm.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($SaveKey)) | ForEach-Object { $_.ToString('x2') }) -join '')
+    } finally { $algorithm.Dispose() }
+    $lockPath = Join-Path $LockRoot ("$keyHash.lock")
+    $token = [Guid]::NewGuid().ToString('N')
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        try {
+            $stream = New-Object System.IO.FileStream($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            try {
+                $payload = [System.Text.Encoding]::UTF8.GetBytes((([PSCustomObject]@{ token = $token; owner_pid = $PID; acquired_utc = [DateTime]::UtcNow.ToString('o'); save_key = $SaveKey }) | ConvertTo-Json -Compress))
+                $stream.Write($payload, 0, $payload.Length)
+                $stream.Flush($true)
+            } finally { $stream.Dispose() }
+            return [PSCustomObject]@{ acquired = $true; recovered_stale = ($attempt -gt 0); token = $token; lock_path = $lockPath }
+        } catch [System.IO.IOException] {
+            $ownerAlive = $true
+            try {
+                $existing = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $ownerAlive = $existing.owner_pid -and ($null -ne (Get-Process -Id ([int]$existing.owner_pid) -ErrorAction SilentlyContinue))
+            } catch { $ownerAlive = $false }
+            if ($ownerAlive -or $attempt -gt 0) {
+                return [PSCustomObject]@{ acquired = $false; recovered_stale = $false; token = $null; lock_path = $lockPath }
+            }
+            Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Exit-CloudCartridgeSaveLock {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$LockPath,
+        [Parameter(Mandatory = $true)][string]$Token
+    )
+    if (-not (Test-Path -LiteralPath $LockPath -PathType Leaf)) { return $false }
+    try { $existing = Get-Content -LiteralPath $LockPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $false }
+    if ($existing.token -ne $Token) { return $false }
+    Remove-Item -LiteralPath $LockPath -Force
+    return $true
+}
+
 function Find-CloudCartridgeSaveCandidates {
     [CmdletBinding()]
     param(
@@ -268,10 +343,48 @@ function Invoke-CloudCartridgeSaveReconcile {
     return [PSCustomObject]$result
 }
 
+function Invoke-CloudCartridgeSaveReconcileGuarded {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$SaveKey,
+        [Parameter(Mandatory = $true)][string]$LocalPath,
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][string]$LocalRoot,
+        [Parameter(Mandatory = $true)][string]$RemoteRoot,
+        [Parameter(Mandatory = $true)][string]$ManifestPath,
+        [Parameter(Mandatory = $true)][string]$HistoryRoot,
+        [string[]]$RetroArchConfigPaths = @(),
+        [bool]$CloudCartridgeSyncEnabled = $true,
+        [ValidateRange(1, 50)][int]$RetainVersions = 5,
+        [switch]$Apply
+    )
+    if ($RetroArchConfigPaths.Count -gt 0) {
+        $syncState = Get-CloudCartridgeNativeSaveSyncState -ConfigPaths $RetroArchConfigPaths -CloudCartridgeSyncEnabled $CloudCartridgeSyncEnabled
+        if ($syncState.conflict) { throw 'Sincronizacao bloqueada: RetroArch Cloud Sync e CloudCartridge estao ativos para saves.' }
+    }
+    if (-not $Apply) {
+        return Invoke-CloudCartridgeSaveReconcile -SaveKey $SaveKey -LocalPath $LocalPath -RemotePath $RemotePath -LocalRoot $LocalRoot -RemoteRoot $RemoteRoot -ManifestPath $ManifestPath -HistoryRoot $HistoryRoot -RetainVersions $RetainVersions
+    }
+    $manifestDirectory = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($ManifestPath))
+    $lock = Enter-CloudCartridgeSaveLock -LockRoot (Join-Path $manifestDirectory '.save-locks') -SaveKey $SaveKey
+    if (-not $lock.acquired) { throw "Save em uso por outro processo: $SaveKey" }
+    try {
+        return Invoke-CloudCartridgeSaveReconcile -SaveKey $SaveKey -LocalPath $LocalPath -RemotePath $RemotePath -LocalRoot $LocalRoot -RemoteRoot $RemoteRoot -ManifestPath $ManifestPath -HistoryRoot $HistoryRoot -RetainVersions $RetainVersions -Apply
+    } finally {
+        if (-not (Exit-CloudCartridgeSaveLock -LockPath $lock.lock_path -Token $lock.token)) {
+            Write-Warning "Nao foi possivel liberar lock do save: $SaveKey"
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-CloudCartridgeSaveFingerprint',
     'Get-CloudCartridgeSaveDecision',
     'Read-CloudCartridgeRetroArchSaveSettings',
+    'Get-CloudCartridgeNativeSaveSyncState',
+    'Enter-CloudCartridgeSaveLock',
+    'Exit-CloudCartridgeSaveLock',
     'Find-CloudCartridgeSaveCandidates',
-    'Invoke-CloudCartridgeSaveReconcile'
+    'Invoke-CloudCartridgeSaveReconcile',
+    'Invoke-CloudCartridgeSaveReconcileGuarded'
 )

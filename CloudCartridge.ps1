@@ -312,11 +312,13 @@ switch ($Command.ToLowerInvariant()) {
                 $remoteRoot = Get-ArgumentValue '--remote-root'
                 $manifestPath = Get-ArgumentValue '--manifest'
                 $historyRoot = Get-ArgumentValue '--history'
+                $retroArchConfig = Get-ArgumentValue '--retroarch-config'
                 $requiredArguments = @($saveKey, $localPath, $remotePath, $localRoot, $remoteRoot, $manifestPath, $historyRoot)
                 if (@($requiredArguments | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
                     throw 'Use: cloudcartridge save reconcile --key <id> --local <arquivo> --remote <arquivo> --local-root <pasta> --remote-root <pasta> --manifest <arquivo> --history <pasta> [--yes] [--json]'
                 }
-                $result = Invoke-CloudCartridgeSaveReconcile -SaveKey $saveKey -LocalPath $localPath -RemotePath $remotePath -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath $manifestPath -HistoryRoot $historyRoot -Apply:$confirmed
+                $configPaths = @($retroArchConfig | Where-Object { $_ })
+                $result = Invoke-CloudCartridgeSaveReconcileGuarded -SaveKey $saveKey -LocalPath $localPath -RemotePath $remotePath -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath $manifestPath -HistoryRoot $historyRoot -RetroArchConfigPaths $configPaths -CloudCartridgeSyncEnabled ([bool]$config.enable_cloud_save_sync) -Apply:$confirmed
                 Write-Result $result
             }
             default { throw 'Use: cloudcartridge save doctor|reconcile [opcoes]' }
