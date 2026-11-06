@@ -321,7 +321,39 @@ switch ($Command.ToLowerInvariant()) {
                 $result = Invoke-CloudCartridgeSaveReconcileGuarded -SaveKey $saveKey -LocalPath $localPath -RemotePath $remotePath -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath $manifestPath -HistoryRoot $historyRoot -RetroArchConfigPaths $configPaths -CloudCartridgeSyncEnabled ([bool]$config.enable_cloud_save_sync) -Apply:$confirmed
                 Write-Result $result
             }
-            default { throw 'Use: cloudcartridge save doctor|reconcile [opcoes]' }
+            'queue' {
+                $saveKey = Get-ArgumentValue '--key'
+                $localPath = Get-ArgumentValue '--local'
+                $remotePath = Get-ArgumentValue '--remote'
+                $localRoot = Get-ArgumentValue '--local-root'
+                $remoteRoot = Get-ArgumentValue '--remote-root'
+                $manifestPath = Get-ArgumentValue '--manifest'
+                $historyRoot = Get-ArgumentValue '--history'
+                $queuePath = Get-ArgumentValue '--queue'
+                $retroArchConfig = Get-ArgumentValue '--retroarch-config'
+                $requiredArguments = @($saveKey, $localPath, $remotePath, $localRoot, $remoteRoot, $manifestPath, $historyRoot, $queuePath)
+                if (@($requiredArguments | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+                    throw 'Use: cloudcartridge save queue --queue <arquivo> --key <id> --local <arquivo> --remote <arquivo> --local-root <pasta> --remote-root <pasta> --manifest <arquivo> --history <pasta> [--json]'
+                }
+                Write-Result (Add-CloudCartridgeSaveSyncJob -QueuePath $queuePath -SaveKey $saveKey -LocalPath $localPath -RemotePath $remotePath -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath $manifestPath -HistoryRoot $historyRoot -RetroArchConfigPaths @($retroArchConfig | Where-Object { $_ }))
+            }
+            'jobs' {
+                $queuePath = Get-ArgumentValue '--queue'
+                if ([string]::IsNullOrWhiteSpace($queuePath)) { throw 'Use: cloudcartridge save jobs --queue <arquivo> [--json]' }
+                Write-Result @(Get-CloudCartridgeSaveSyncJobs -QueuePath $queuePath)
+            }
+            'sync' {
+                $queuePath = Get-ArgumentValue '--queue'
+                if ([string]::IsNullOrWhiteSpace($queuePath)) { throw 'Use: cloudcartridge save sync --queue <arquivo> [--yes] [--json]' }
+                if (-not $confirmed) {
+                    $pendingJobs = @(Get-CloudCartridgeSaveSyncJobs -QueuePath $queuePath | Where-Object { $_.state -eq 'queued' })
+                    Write-Result ([PSCustomObject]@{ applied = $false; dry_run = $true; pending = $pendingJobs })
+                } else {
+                    $syncResults = @(Invoke-CloudCartridgeSaveSyncQueue -QueuePath $queuePath -CloudCartridgeSyncEnabled ([bool]$config.enable_cloud_save_sync))
+                    Write-Result ([PSCustomObject]@{ applied = $true; dry_run = $false; results = $syncResults })
+                }
+            }
+            default { throw 'Use: cloudcartridge save doctor|reconcile|queue|jobs|sync [opcoes]' }
         }
     }
     default {

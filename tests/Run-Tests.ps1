@@ -398,6 +398,40 @@ try {
         Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $guardRoot '.save-locks') -Filter '*.lock' -ErrorAction SilentlyContinue).Count -eq 0) 'Lock permaneceu apos reconciliacao.'
     }
 
+    Invoke-Test 'Offline save queue is durable and resumes when remote returns' {
+        $queueRoot = Join-Path $tempRoot 'offline-save-queue'
+        $localRoot = Join-Path $queueRoot 'local'
+        $remoteRoot = Join-Path $queueRoot 'remote-offline'
+        $localSave = Join-Path $localRoot 'game.srm'
+        $remoteSave = Join-Path $remoteRoot 'game.srm'
+        $queuePath = Join-Path $queueRoot 'save-jobs.json'
+        New-Item -ItemType Directory -Path $localRoot -Force | Out-Null
+        [System.IO.File]::WriteAllText($localSave, 'offline-progress', [System.Text.Encoding]::UTF8)
+        $arguments = @{
+            QueuePath = $queuePath; SaveKey = 'offline-game'; LocalPath = $localSave; RemotePath = $remoteSave
+            LocalRoot = $localRoot; RemoteRoot = $remoteRoot; ManifestPath = (Join-Path $queueRoot 'manifest.json')
+            HistoryRoot = (Join-Path $queueRoot 'history')
+        }
+        $first = Add-CloudCartridgeSaveSyncJob @arguments
+        $duplicate = Add-CloudCartridgeSaveSyncJob @arguments
+        Assert-True (-not $first.deduplicated -and $duplicate.deduplicated) 'Fila offline nao deduplicou o save.'
+
+        $offline = @(Invoke-CloudCartridgeSaveSyncQueue -QueuePath $queuePath)
+        Assert-True ($offline.Count -eq 1 -and $offline[0].state -eq 'queued' -and $offline[0].last_error -eq 'remote_offline') 'Job offline nao permaneceu pendente.'
+        Assert-True (-not (Test-Path -LiteralPath $remoteSave)) 'Fila offline gravou em destino indisponivel.'
+        $cliPreviewOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.ps1') save sync --queue $queuePath --json 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "CLI save sync falhou: $($cliPreviewOutput -join ' ')"
+        $cliPreview = ($cliPreviewOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($cliPreview.dry_run -and -not $cliPreview.applied -and @($cliPreview.pending).Count -eq 1) 'CLI processou fila sem --yes.'
+
+        New-Item -ItemType Directory -Path $remoteRoot -Force | Out-Null
+        $resumed = @(Invoke-CloudCartridgeSaveSyncQueue -QueuePath $queuePath)
+        Assert-True ($resumed.Count -eq 1 -and $resumed[0].state -eq 'completed') 'Job nao retomou quando o remoto voltou.'
+        Assert-True ((Get-Content -LiteralPath $remoteSave -Raw) -eq 'offline-progress') 'Save retomado chegou com conteudo incorreto.'
+        $persisted = @(Get-CloudCartridgeSaveSyncJobs -QueuePath $queuePath)
+        Assert-True ($persisted.Count -eq 1 -and $persisted[0].attempts -eq 2) 'Estado duravel da fila incorreto.'
+    }
+
     Invoke-Test 'Publish script has no force push' {
         $publishText = Get-Content -LiteralPath (Join-Path $repoRoot 'Publicar_no_GitHub.cmd') -Raw
         Assert-True ($publishText -notmatch 'push[^\r\n]*--force') 'Force push ainda presente.'

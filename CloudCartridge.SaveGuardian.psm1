@@ -377,6 +377,122 @@ function Invoke-CloudCartridgeSaveReconcileGuarded {
     }
 }
 
+function Read-CloudCartridgeSaveSyncQueue {
+    param([Parameter(Mandatory = $true)][string]$QueuePath)
+    if (-not (Test-Path -LiteralPath $QueuePath -PathType Leaf)) {
+        return [PSCustomObject]@{ schema_version = 1; jobs = @() }
+    }
+    try {
+        $queue = Get-Content -LiteralPath $QueuePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $queue.PSObject.Properties['jobs']) { throw 'Campo jobs ausente.' }
+        return $queue
+    } catch { throw "Fila de saves invalida: $($_.Exception.Message)" }
+}
+
+function Invoke-CloudCartridgeSaveQueueLock {
+    param(
+        [Parameter(Mandatory = $true)][string]$QueuePath,
+        [Parameter(Mandatory = $true)][scriptblock]$Body
+    )
+    $directory = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($QueuePath))
+    $lock = Enter-CloudCartridgeSaveLock -LockRoot (Join-Path $directory '.queue-locks') -SaveKey 'save-sync-queue'
+    if (-not $lock.acquired) { throw 'Fila de saves em uso por outro processo.' }
+    try { return & $Body } finally { $null = Exit-CloudCartridgeSaveLock -LockPath $lock.lock_path -Token $lock.token }
+}
+
+function Add-CloudCartridgeSaveSyncJob {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$QueuePath,
+        [Parameter(Mandatory = $true)][string]$SaveKey,
+        [Parameter(Mandatory = $true)][string]$LocalPath,
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][string]$LocalRoot,
+        [Parameter(Mandatory = $true)][string]$RemoteRoot,
+        [Parameter(Mandatory = $true)][string]$ManifestPath,
+        [Parameter(Mandatory = $true)][string]$HistoryRoot,
+        [string[]]$RetroArchConfigPaths = @()
+    )
+    if (-not (Test-CloudCartridgePathWithinRoot -Path $LocalPath -Root $LocalRoot)) { throw 'Save local da fila fora da raiz permitida.' }
+    if (-not (Test-CloudCartridgePathWithinRoot -Path $RemotePath -Root $RemoteRoot)) { throw 'Save remoto da fila fora da raiz permitida.' }
+    return Invoke-CloudCartridgeSaveQueueLock -QueuePath $QueuePath -Body {
+        $queue = Read-CloudCartridgeSaveSyncQueue -QueuePath $QueuePath
+        $existing = @($queue.jobs | Where-Object { $_.save_key -eq $SaveKey -and $_.state -in @('queued', 'active') } | Select-Object -First 1)
+        if ($existing.Count -gt 0) { return [PSCustomObject]@{ job = $existing[0]; deduplicated = $true } }
+        $job = [PSCustomObject][ordered]@{
+            job_id = [Guid]::NewGuid().ToString('D')
+            save_key = $SaveKey
+            local_path = [System.IO.Path]::GetFullPath($LocalPath)
+            remote_path = [System.IO.Path]::GetFullPath($RemotePath)
+            local_root = [System.IO.Path]::GetFullPath($LocalRoot)
+            remote_root = [System.IO.Path]::GetFullPath($RemoteRoot)
+            manifest_path = [System.IO.Path]::GetFullPath($ManifestPath)
+            history_root = [System.IO.Path]::GetFullPath($HistoryRoot)
+            retroarch_config_paths = @($RetroArchConfigPaths)
+            state = 'queued'
+            attempts = 0
+            last_error = $null
+            created_utc = [DateTime]::UtcNow.ToString('o')
+            updated_utc = [DateTime]::UtcNow.ToString('o')
+        }
+        $queue.jobs = @($queue.jobs) + $job
+        Write-CloudCartridgeJsonAtomic -InputObject $queue -Path $QueuePath -Depth 8
+        return [PSCustomObject]@{ job = $job; deduplicated = $false }
+    }
+}
+
+function Get-CloudCartridgeSaveSyncJobs {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$QueuePath)
+    return @((Read-CloudCartridgeSaveSyncQueue -QueuePath $QueuePath).jobs | Sort-Object created_utc)
+}
+
+function Set-CloudCartridgeSaveSyncJobState {
+    param(
+        [string]$QueuePath,
+        [string]$JobId,
+        [ValidateSet('queued', 'active', 'completed', 'failed', 'review')][string]$State,
+        [string]$LastError = '',
+        [switch]$IncrementAttempts
+    )
+    return Invoke-CloudCartridgeSaveQueueLock -QueuePath $QueuePath -Body {
+        $queue = Read-CloudCartridgeSaveSyncQueue -QueuePath $QueuePath
+        $job = @($queue.jobs | Where-Object { $_.job_id -eq $JobId } | Select-Object -First 1)
+        if ($job.Count -eq 0) { throw "Job de save inexistente: $JobId" }
+        $job[0].state = $State
+        if ($IncrementAttempts) { $job[0].attempts = [int]$job[0].attempts + 1 }
+        $job[0].last_error = if ($LastError) { $LastError } else { $null }
+        $job[0].updated_utc = [DateTime]::UtcNow.ToString('o')
+        Write-CloudCartridgeJsonAtomic -InputObject $queue -Path $QueuePath -Depth 8
+        return $job[0]
+    }
+}
+
+function Invoke-CloudCartridgeSaveSyncQueue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$QueuePath,
+        [bool]$CloudCartridgeSyncEnabled = $true
+    )
+    $results = @()
+    foreach ($job in @(Get-CloudCartridgeSaveSyncJobs -QueuePath $QueuePath | Where-Object { $_.state -eq 'queued' })) {
+        if (-not (Test-Path -LiteralPath $job.remote_root -PathType Container)) {
+            $updated = Set-CloudCartridgeSaveSyncJobState -QueuePath $QueuePath -JobId $job.job_id -State queued -LastError 'remote_offline' -IncrementAttempts
+            $results += $updated
+            continue
+        }
+        $null = Set-CloudCartridgeSaveSyncJobState -QueuePath $QueuePath -JobId $job.job_id -State active -IncrementAttempts
+        try {
+            $reconcile = Invoke-CloudCartridgeSaveReconcileGuarded -SaveKey $job.save_key -LocalPath $job.local_path -RemotePath $job.remote_path -LocalRoot $job.local_root -RemoteRoot $job.remote_root -ManifestPath $job.manifest_path -HistoryRoot $job.history_root -RetroArchConfigPaths @($job.retroarch_config_paths) -CloudCartridgeSyncEnabled $CloudCartridgeSyncEnabled -Apply
+            $terminalState = if ($reconcile.decision -in @('remote_missing_review', 'local_missing_review', 'no_save_found')) { 'review' } else { 'completed' }
+            $results += Set-CloudCartridgeSaveSyncJobState -QueuePath $QueuePath -JobId $job.job_id -State $terminalState
+        } catch {
+            $results += Set-CloudCartridgeSaveSyncJobState -QueuePath $QueuePath -JobId $job.job_id -State failed -LastError $_.Exception.Message
+        }
+    }
+    return $results
+}
+
 Export-ModuleMember -Function @(
     'Get-CloudCartridgeSaveFingerprint',
     'Get-CloudCartridgeSaveDecision',
@@ -386,5 +502,8 @@ Export-ModuleMember -Function @(
     'Exit-CloudCartridgeSaveLock',
     'Find-CloudCartridgeSaveCandidates',
     'Invoke-CloudCartridgeSaveReconcile',
-    'Invoke-CloudCartridgeSaveReconcileGuarded'
+    'Invoke-CloudCartridgeSaveReconcileGuarded',
+    'Add-CloudCartridgeSaveSyncJob',
+    'Get-CloudCartridgeSaveSyncJobs',
+    'Invoke-CloudCartridgeSaveSyncQueue'
 )
