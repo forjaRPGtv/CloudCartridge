@@ -8,6 +8,7 @@ Import-Module (Join-Path $repoRoot 'CloudCartridge.SaveGuardian.psm1') -Force
 Import-Module (Join-Path $repoRoot 'CloudCartridge.Playlists.psm1') -Force
 Import-Module (Join-Path $repoRoot 'CloudCartridge.Host.psm1') -Force
 Import-Module (Join-Path $repoRoot 'CloudCartridge.HostApi.psm1') -Force
+Import-Module (Join-Path $repoRoot 'CloudCartridge.Mister.psm1') -Force
 $script:passed = 0
 $script:failed = 0
 
@@ -188,6 +189,8 @@ try {
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.SaveGuardian.psm1') -Destination $cliRoot
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Playlists.psm1') -Destination $cliRoot
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Host.psm1') -Destination $cliRoot
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Mister.psm1') -Destination $cliRoot
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'mister_compatibility.template.json') -Destination $cliRoot
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.ps1') -Destination $cliRoot
         Write-CloudCartridgeJsonAtomic -InputObject ([PSCustomObject]@{
             local_roms_path = $cliLibrary
@@ -758,6 +761,44 @@ try {
             Assert-True ($null -ne $health -and $health.ok -and $health.code -eq 'ok') "Listener loopback nao respondeu: $($serverOutput -join ' ')"
             Assert-True ($serverJob.State -eq 'Completed') 'Listener -Once nao encerrou apos responder.'
         } finally { Remove-Job -Job $serverJob -Force -ErrorAction SilentlyContinue }
+    }
+
+    Invoke-Test 'MiSTer offline is isolated and compatibility follows installed core' {
+        $compatibilityPath = Join-Path $repoRoot 'mister_compatibility.template.json'
+        $unauthorized = Get-CloudCartridgeMisterState -HostName 'mister-unknown' -AuthorizedHosts @('mister-home') -ProbeAction { throw 'must not run' }
+        Assert-True ($unauthorized.state -eq 'unauthorized' -and -not $unauthorized.connected) 'Host MiSTer nao autorizado foi consultado.'
+        $offline = Get-CloudCartridgeMisterState -HostName 'mister-home' -AuthorizedHosts @('mister-home') -ProbeAction { throw 'offline' }
+        Assert-True ($offline.state -eq 'offline' -and -not $offline.connected) 'MiSTer offline virou erro global.'
+        $pcConfig = Get-CloudCartridgeConfig -ConfigPath (Join-Path $tempRoot 'missing-after-mister.json')
+        Assert-True ($pcConfig.retention_days -eq 3) 'MiSTer offline bloqueou operacao local do PC.'
+        $connected = Get-CloudCartridgeMisterState -HostName 'mister-home' -AuthorizedHosts @('mister-home') -ProbeAction { [PSCustomObject]@{ connected = $true; cores = @('PSX', 'NES'); free_bytes = 10GB; transport = 'sftp' } }
+        Assert-True ($connected.state -eq 'connected' -and $connected.cores.Count -eq 2) 'Probe autorizado nao retornou cores.'
+        $pcOnly = Get-CloudCartridgeMisterCompatibility -CompatibilityPath $compatibilityPath -System 'Nintendo - Wii U' -Extension '.wux' -InstalledCores @('PSX')
+        Assert-True (-not $pcOnly.compatible -and $pcOnly.state -eq 'pc_only') 'Wii U foi oferecido ao MiSTer.'
+        $cliOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.ps1') mister compatibility --system 'Nintendo - Wii U' --extension .wux --cores PSX --json 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "CLI MiSTer falhou: $($cliOutput -join ' ')"
+        $cliCompatibility = ($cliOutput -join "`n") | ConvertFrom-Json
+        Assert-True (-not $cliCompatibility.compatible -and $cliCompatibility.state -eq 'pc_only') 'CLI ofereceu plataforma PC-only ao MiSTer.'
+        $psx = Get-CloudCartridgeMisterCompatibility -CompatibilityPath $compatibilityPath -System 'Sony - PlayStation' -Extension '.chd' -InstalledCores @('PSX')
+        Assert-True ($psx.compatible -and $psx.folder_per_game) 'PSX CHD com core instalado nao foi aceito.'
+
+        $libraryRoot = Join-Path $tempRoot 'mister-library'
+        $source = Join-Path $libraryRoot 'Sony - PlayStation\Fixture Game.chd'
+        $remoteRoot = Join-Path $tempRoot 'mister-remote'
+        New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($source)) -Force | Out-Null
+        [System.IO.File]::WriteAllBytes($source, [byte[]](1, 2, 3, 4))
+        $offlinePlan = Invoke-CloudCartridgeMisterDistribution -SourcePath $source -LibraryRoot $libraryRoot -System 'Sony - PlayStation' -MisterState $offline -CompatibilityPath $compatibilityPath -RemoteRoot $remoteRoot
+        Assert-True ($offlinePlan.state -eq 'offline' -and -not $offlinePlan.pc_operation_blocked) 'MiSTer offline bloqueou o PC.'
+        $plan = Invoke-CloudCartridgeMisterDistribution -SourcePath $source -LibraryRoot $libraryRoot -System 'Sony - PlayStation' -MisterState $connected -CompatibilityPath $compatibilityPath -RemoteRoot $remoteRoot
+        Assert-True ($plan.state -eq 'planned' -and $plan.destination -like '*Fixture Game\Fixture Game.chd') 'PSX nao planejou pasta individual.'
+        $applied = Invoke-CloudCartridgeMisterDistribution -SourcePath $source -LibraryRoot $libraryRoot -System 'Sony - PlayStation' -MisterState $connected -CompatibilityPath $compatibilityPath -RemoteRoot $remoteRoot -Apply -TransferAction {
+            param($from, $to)
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($to)) -Force | Out-Null
+            Copy-Item -LiteralPath $from -Destination $to
+            return $true
+        }
+        Assert-True ($applied.state -eq 'transferred' -and (Test-Path -LiteralPath $applied.destination -PathType Leaf)) 'Transferencia MiSTer de fixture falhou.'
+        Assert-True ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $applied.destination -Algorithm SHA256).Hash) 'Transferencia MiSTer alterou conteudo.'
     }
 
     Invoke-Test 'Publish script has no force push' {

@@ -10,6 +10,7 @@ Import-Module (Join-Path $scriptDir 'CloudCartridge.Core.psm1') -Force
 Import-Module (Join-Path $scriptDir 'CloudCartridge.SaveGuardian.psm1') -Force
 Import-Module (Join-Path $scriptDir 'CloudCartridge.Playlists.psm1') -Force
 Import-Module (Join-Path $scriptDir 'CloudCartridge.Host.psm1') -Force
+Import-Module (Join-Path $scriptDir 'CloudCartridge.Mister.psm1') -Force
 
 $jsonOutput = $Arguments -contains '--json'
 $confirmed = $Arguments -contains '--yes'
@@ -452,7 +453,31 @@ switch ($Command.ToLowerInvariant()) {
             default { throw 'Use: cloudcartridge host monitor|users [opcoes]' }
         }
     }
+    'mister' {
+        $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'compatibility' }
+        $compatibilityPath = Join-Path $scriptDir 'mister_compatibility.template.json'
+        $system = Get-ArgumentValue '--system'
+        $coresText = Get-ArgumentValue '--cores'
+        $cores = if ($coresText) { @($coresText -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) } else { @() }
+        switch ($subcommand) {
+            'compatibility' {
+                $extension = Get-ArgumentValue '--extension'
+                if ([string]::IsNullOrWhiteSpace($system) -or [string]::IsNullOrWhiteSpace($extension)) { throw 'Use: cloudcartridge mister compatibility --system <nome> --extension <ext> --cores <lista> [--json]' }
+                Write-Result (Get-CloudCartridgeMisterCompatibility -CompatibilityPath $compatibilityPath -System $system -Extension $extension -InstalledCores $cores)
+            }
+            'plan' {
+                $source = Get-ArgumentValue '--source'
+                $libraryRoot = Get-ArgumentValue '--library-root'
+                $remoteRoot = Get-ArgumentValue '--remote-root'
+                $requiredArguments = @($source, $libraryRoot, $system, $remoteRoot)
+                if (@($requiredArguments | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) { throw 'Use: cloudcartridge mister plan --source <arquivo> --library-root <pasta> --system <nome> --remote-root <pasta> --cores <lista> [--json]' }
+                $state = [PSCustomObject]@{ state = 'connected'; connected = $true; cores = $cores; free_bytes = $null; transport = 'planned' }
+                Write-Result (Invoke-CloudCartridgeMisterDistribution -SourcePath $source -LibraryRoot $libraryRoot -System $system -MisterState $state -CompatibilityPath $compatibilityPath -RemoteRoot $remoteRoot)
+            }
+            default { throw 'Use: cloudcartridge mister compatibility|plan [opcoes]' }
+        }
+    }
     default {
-        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache, downloads, save, library, playlist, thumbnails ou host."
+        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache, downloads, save, library, playlist, thumbnails, host ou mister."
     }
 }

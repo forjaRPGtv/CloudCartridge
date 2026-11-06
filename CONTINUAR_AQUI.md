@@ -36,10 +36,11 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 - Fase 4 iniciada: cinco convidados, credenciais, recovery e isolamento de saves por UUID validados.
 - Convites de uso único/expiração e armazenamento DPAPI fail-closed foram adicionados.
 - Recovery exige confirmação; API autenticada, anti-replay/rate-limit, listener privado e monitor CLI estão integrados.
+- Fase 5 iniciada: adapter MiSTer isolado, offline tolerado e compatibilidade baseada em core/formato.
 
 ## Evidência atual
 
-- `Testar_CloudCartridge.cmd`: 38 aprovados, 0 falhas.
+- `Testar_CloudCartridge.cmd`: 39 aprovados, 0 falhas.
 - Smoke real em PowerShell 5.1 do Launcher e Telemetria com fixture temporária.
 - `doctor --json`: RetroArch detectado, 45/46 mapeamentos de core detectados, 6/6 mapeamentos standalone (5 executáveis únicos).
 - Alertas atuais: `config.json` local ausente, destino de Cloud Save não configurado e Wii U ainda com mapeamento `DETECT`.
@@ -54,7 +55,7 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 
 ## Próxima ação
 
-Validar DPAPI em sessão interativa e API entre dois PCs/VPN; adicionar monitor TUI contínuo e iniciar MiSTer sem bloquear o PC quando offline.
+Adicionar monitor TUI contínuo e iniciar empacotamento/Skill da Fase 6; validar DPAPI, rede entre dois PCs e MiSTer físico quando esses ambientes estiverem disponíveis.
 
 Comando de retomada:
 

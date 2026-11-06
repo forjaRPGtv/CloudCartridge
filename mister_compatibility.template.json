@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "systems": {
+    "Sony - PlayStation": { "core_aliases": ["PSX", "PlayStation"], "extensions": [".chd", ".cue", ".bin", ".m3u"], "folder_per_game": true },
+    "Nintendo - Nintendo Entertainment System": { "core_aliases": ["NES"], "extensions": [".nes", ".zip"], "folder_per_game": false },
+    "Nintendo - Super Nintendo Entertainment System": { "core_aliases": ["SNES"], "extensions": [".sfc", ".smc", ".zip"], "folder_per_game": false },
+    "Sega - Mega Drive - Genesis": { "core_aliases": ["Genesis", "MegaDrive"], "extensions": [".md", ".bin", ".zip"], "folder_per_game": false },
+    "Nintendo - Game Boy": { "core_aliases": ["Gameboy", "Game Boy"], "extensions": [".gb", ".zip"], "folder_per_game": false },
+    "Nintendo - Game Boy Color": { "core_aliases": ["Gameboy", "Game Boy"], "extensions": [".gbc", ".zip"], "folder_per_game": false }
+  },
+  "pc_only_systems": [
+    "Nintendo - GameCube",
+    "Nintendo - Wii",
+    "Nintendo - Wii U",
+    "Sony - PlayStation 2",
+    "Sony - PlayStation 3"
+  ]
+}
