@@ -241,14 +241,27 @@ $catalogId = Get-CloudCartridgeCatalogIdForPath -Path $FilePath
 $jobPriority = if ($PrefetchOnly) { 'prefetch' } else { 'current' }
 $registration = Register-CloudCartridgeDownloadJob -JournalPath $downloadJournal -ManagedRoot $baseDir -FilePath $FilePath -CatalogId $catalogId -Priority $jobPriority
 if ($registration.deduplicated) {
-    Write-Host "[Fila] Download ja solicitado; reutilizando job $($registration.job.job_id)." -ForegroundColor Gray
-    exit 0
+    Write-Host "[Fila] Download ja solicitado; aguardando job $($registration.job.job_id)." -ForegroundColor Gray
 }
 $downloadJobId = $registration.job.job_id
-while (-not (Enter-CloudCartridgeDownloadJob -JournalPath $downloadJournal -JobId $downloadJobId -MaxConcurrent ([int]$config.max_concurrent_downloads))) {
+$ownsDownloadJob = $false
+while (-not $ownsDownloadJob) {
+    $currentJob = @(Get-CloudCartridgeDownloadJobs -JournalPath $downloadJournal | Where-Object { $_.job_id -eq $downloadJobId } | Select-Object -First 1)
+    if ($currentJob.Count -eq 0) { throw "Job de download desapareceu: $downloadJobId" }
+    if ($currentJob[0].state -eq 'completed') {
+        Write-Host "[Fila] Download compartilhado concluido e validado." -ForegroundColor Green
+        exit 0
+    }
+    if ($currentJob[0].state -eq 'failed') {
+        throw "Download compartilhado falhou: $($currentJob[0].error)"
+    }
+    $ownsDownloadJob = Enter-CloudCartridgeDownloadJob -JournalPath $downloadJournal -JobId $downloadJobId -MaxConcurrent ([int]$config.max_concurrent_downloads)
+    if ($ownsDownloadJob) { break }
     Start-Sleep -Milliseconds 250
 }
-$null = Set-CloudCartridgeDownloadJobState -JournalPath $downloadJournal -JobId $downloadJobId -State active -TotalBytes $totalBytes
+$resumeBytes = if ($currentJob[0].bytes_downloaded) { [long]$currentJob[0].bytes_downloaded } else { 0 }
+if ($resumeBytes -lt 0 -or $resumeBytes -ge $totalBytes) { $resumeBytes = 0 }
+$null = Set-CloudCartridgeDownloadJobState -JournalPath $downloadJournal -JobId $downloadJobId -State active -BytesDownloaded $resumeBytes -TotalBytes $totalBytes
 
 Write-Host "==========================================================================================" -ForegroundColor Cyan
 Write-Host "                  TELEMETRIA CLOUDCARTRIDGE - DOWNLOAD EM TEMPO REAL                     " -ForegroundColor Yellow
@@ -271,11 +284,14 @@ Draw-InstalledGamesPanel
 $buffer = New-Object byte[] (4 * 1024 * 1024)
 $stream = $null
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-$readTotal = 0
+$readTotal = $resumeBytes
 $lastUpdate = [DateTime]::MinValue
 
 try {
     $stream = [System.IO.File]::OpenRead($FilePath)
+    if ($resumeBytes -gt 0) {
+        $null = $stream.Seek($resumeBytes, [System.IO.SeekOrigin]::Begin)
+    }
 
     while ($readTotal -lt $totalBytes) {
         $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
@@ -308,6 +324,7 @@ try {
             Set-TelemetryCursor -left 0 -top 12
             Write-Host " Tempo      : " -NoNewline -ForegroundColor Gray
             Write-Host "$([math]::Round($elapsedSec, 1))s decorridos | ETA restante: $($etaSec)s     " -ForegroundColor White
+            $null = Set-CloudCartridgeDownloadJobState -JournalPath $downloadJournal -JobId $downloadJobId -State active -BytesDownloaded $readTotal -TotalBytes $totalBytes
         }
     }
 } catch {
@@ -317,7 +334,7 @@ try {
     if ($stream) { $stream.Close(); $stream.Dispose() }
     $stopwatch.Stop()
 }
-$null = Set-CloudCartridgeDownloadJobState -JournalPath $downloadJournal -JobId $downloadJobId -State completed -BytesDownloaded $readTotal -TotalBytes $totalBytes
+$contentSha256 = (Get-FileHash -LiteralPath $FilePath -Algorithm SHA256).Hash.ToLowerInvariant()
 
 $reg = Get-RegistryData
 if (-not $reg.PSObject.Properties['games']) {
@@ -338,6 +355,7 @@ $entry = [PSCustomObject]@{
     size_mb     = $totalMB
     status      = "local_cached"
     is_pinned   = $existingPinned
+    sha256      = $contentSha256
 }
 if ($reg.games.PSObject.Properties[$cleanPath]) {
     $reg.games.$cleanPath = $entry
@@ -345,6 +363,7 @@ if ($reg.games.PSObject.Properties[$cleanPath]) {
     $reg.games | Add-Member -MemberType NoteProperty -Name $cleanPath -Value $entry
 }
 Save-RegistryData $reg
+$null = Set-CloudCartridgeDownloadJobState -JournalPath $downloadJournal -JobId $downloadJobId -State completed -BytesDownloaded $readTotal -TotalBytes $totalBytes -ContentSha256 $contentSha256
 
 Set-TelemetryCursor -left 0 -top 13
 Write-Host "`n [STATUS] DOWNLOAD 100% CONCLUIDO EM $([math]::Round($stopwatch.Elapsed.TotalSeconds, 1))s! O jogo esta pronto." -ForegroundColor Green

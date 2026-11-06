@@ -454,6 +454,7 @@ function Register-CloudCartridgeDownloadJob {
             state = 'queued'
             bytes_downloaded = 0
             total_bytes = 0
+            content_sha256 = $null
             created_at_utc = [DateTime]::UtcNow.ToString('o')
             updated_at_utc = [DateTime]::UtcNow.ToString('o')
             owner_pid = $null
@@ -479,18 +480,25 @@ function Set-CloudCartridgeDownloadJobState {
         [Parameter(Mandatory = $true)][string]$JournalPath,
         [Parameter(Mandatory = $true)][string]$JobId,
         [ValidateSet('queued', 'active', 'completed', 'failed')][string]$State,
-        [long]$BytesDownloaded = 0,
-        [long]$TotalBytes = 0,
+        [Nullable[long]]$BytesDownloaded,
+        [Nullable[long]]$TotalBytes,
+        [string]$ContentSha256 = '',
         [string]$ErrorMessage = ''
     )
+    $hasBytesDownloaded = $PSBoundParameters.ContainsKey('BytesDownloaded')
+    $hasTotalBytes = $PSBoundParameters.ContainsKey('TotalBytes')
     $lockPath = "$JournalPath.lock"
     return Invoke-CloudCartridgeFileLock -LockPath $lockPath -Body {
         $journal = Read-CloudCartridgeDownloadJournal -JournalPath $JournalPath
         $job = @($journal.jobs | Where-Object { $_.job_id -eq $JobId } | Select-Object -First 1)
         if ($job.Count -eq 0) { throw "Job inexistente: $JobId" }
         $job[0].state = $State
-        $job[0].bytes_downloaded = $BytesDownloaded
-        $job[0].total_bytes = $TotalBytes
+        if ($hasBytesDownloaded) { $job[0].bytes_downloaded = [long]$BytesDownloaded }
+        if ($hasTotalBytes) { $job[0].total_bytes = [long]$TotalBytes }
+        if (-not $job[0].PSObject.Properties['content_sha256']) {
+            $job[0] | Add-Member NoteProperty content_sha256 $null
+        }
+        if ($ContentSha256) { $job[0].content_sha256 = $ContentSha256.ToLowerInvariant() }
         $job[0].updated_at_utc = [DateTime]::UtcNow.ToString('o')
         $job[0].owner_pid = if ($State -eq 'active') { $PID } else { $null }
         $job[0].error = if ($ErrorMessage) { $ErrorMessage } else { $null }

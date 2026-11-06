@@ -8,7 +8,8 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 
 - Branch: `main`, baseline inicial `8b7cfa7`.
 - Fase 0 concluída: código, dependências e riscos auditados.
-- Fase 1 em andamento: dois lotes de estabilização integrados e cobertos por testes.
+- Fase 1 avançada: estabilização, cache e fila integrados; retomada/checksum adicionados.
+- Fase 2 iniciada: Save Guardian em três vias e `save doctor` integrados com fixtures.
 - Backup anterior à Fase 1: `..\backups\CloudCartridge-phase1-20261106\` (bundle Git completo e snapshot de configuração do RetroArch).
 
 ## Alterações deste marco
@@ -24,10 +25,12 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 - Política/pin/limpeza do cache são prévia por padrão e só aplicam com `--yes`.
 - Journal de downloads deduplica solicitações, prioriza o jogo atual e limita concorrência.
 - Launcher e CLI compartilham o mesmo executor de limpeza segura.
+- Downloads retomam do progresso registrado e persistem SHA-256 antes de concluir o job.
+- Save Guardian usa manifesto/hash-base, preserva conflitos dos dois lados e reconhece caminho legado do RetroArch.
 
 ## Evidência atual
 
-- `Testar_CloudCartridge.cmd`: 19 aprovados, 0 falhas.
+- `Testar_CloudCartridge.cmd`: 22 aprovados, 0 falhas.
 - Smoke real em PowerShell 5.1 do Launcher e Telemetria com fixture temporária.
 - `doctor --json`: RetroArch detectado, 45/46 mapeamentos de core detectados, 6/6 mapeamentos standalone (5 executáveis únicos).
 - Alertas atuais: `config.json` local ausente, destino de Cloud Save não configurado e Wii U ainda com mapeamento `DETECT`.
@@ -42,7 +45,7 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 
 ## Próxima ação
 
-Fechar T05/T06/T27 com checksum e retomada segura da hidratação e ampliar T39 para comparar configuração efetiva de saves/cores. Depois iniciar o Save Guardian da Fase 2 com fixtures, manifesto e merge de três vias.
+Ampliar o Save Guardian para overrides de core/diretório/jogo, mudança de core/nome/formato, locks de emulador e fila offline. Depois fechar os gates restantes da Fase 1 e Fase 2 antes de playlists.
 
 Comando de retomada:
 

@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $scriptDir = $PSScriptRoot
 Import-Module (Join-Path $scriptDir 'CloudCartridge.Core.psm1') -Force
+Import-Module (Join-Path $scriptDir 'CloudCartridge.SaveGuardian.psm1') -Force
 
 $jsonOutput = $Arguments -contains '--json'
 $confirmed = $Arguments -contains '--yes'
@@ -279,7 +280,49 @@ switch ($Command.ToLowerInvariant()) {
         if ($subcommand -ne 'list') { throw 'Use: cloudcartridge downloads list [--json]' }
         Write-Result (Get-DownloadSummary)
     }
+    'save' {
+        $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'doctor' }
+        switch ($subcommand) {
+            'doctor' {
+                $gameName = Get-ArgumentValue '--game-name'
+                if ([string]::IsNullOrWhiteSpace($gameName)) { throw 'Use: cloudcartridge save doctor --game-name <nome> [--current-dir <pasta>] [--legacy-dir <pasta>] [--retroarch-config <arquivo>] [--json]' }
+                $currentDirectory = Get-ArgumentValue '--current-dir'
+                $legacyDirectory = Get-ArgumentValue '--legacy-dir'
+                $retroArchConfig = Get-ArgumentValue '--retroarch-config'
+                if ([string]::IsNullOrWhiteSpace($retroArchConfig)) {
+                    $retroArchConfig = if (Test-Path -LiteralPath 'C:\RetroArch-Win64\retroarch.cfg' -PathType Leaf) { 'C:\RetroArch-Win64\retroarch.cfg' } else { $null }
+                }
+                $settings = if ($retroArchConfig) { Read-CloudCartridgeRetroArchSaveSettings -ConfigPaths @($retroArchConfig) } else { $null }
+                if ([string]::IsNullOrWhiteSpace($currentDirectory) -and $settings) { $currentDirectory = $settings.savefile_directory }
+                if ([string]::IsNullOrWhiteSpace($currentDirectory)) { throw 'Diretorio atual de saves nao resolvido; informe --current-dir.' }
+                $report = Find-CloudCartridgeSaveCandidates -GameName $gameName -CurrentDirectories @($currentDirectory) -LegacyDirectories @($legacyDirectory | Where-Object { $_ })
+                Write-Result ([PSCustomObject][ordered]@{
+                    status = $report.status
+                    path_changed = $report.path_changed
+                    game_name = $report.game_name
+                    effective_settings = $settings
+                    candidates = $report.candidates
+                })
+            }
+            'reconcile' {
+                $saveKey = Get-ArgumentValue '--key'
+                $localPath = Get-ArgumentValue '--local'
+                $remotePath = Get-ArgumentValue '--remote'
+                $localRoot = Get-ArgumentValue '--local-root'
+                $remoteRoot = Get-ArgumentValue '--remote-root'
+                $manifestPath = Get-ArgumentValue '--manifest'
+                $historyRoot = Get-ArgumentValue '--history'
+                $requiredArguments = @($saveKey, $localPath, $remotePath, $localRoot, $remoteRoot, $manifestPath, $historyRoot)
+                if (@($requiredArguments | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+                    throw 'Use: cloudcartridge save reconcile --key <id> --local <arquivo> --remote <arquivo> --local-root <pasta> --remote-root <pasta> --manifest <arquivo> --history <pasta> [--yes] [--json]'
+                }
+                $result = Invoke-CloudCartridgeSaveReconcile -SaveKey $saveKey -LocalPath $localPath -RemotePath $remotePath -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath $manifestPath -HistoryRoot $historyRoot -Apply:$confirmed
+                Write-Result $result
+            }
+            default { throw 'Use: cloudcartridge save doctor|reconcile [opcoes]' }
+        }
+    }
     default {
-        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache ou downloads."
+        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache, downloads ou save."
     }
 }

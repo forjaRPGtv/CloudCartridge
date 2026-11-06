@@ -4,6 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $repoRoot 'CloudCartridge.Core.psm1') -Force
+Import-Module (Join-Path $repoRoot 'CloudCartridge.SaveGuardian.psm1') -Force
 $script:passed = 0
 $script:failed = 0
 
@@ -181,6 +182,7 @@ try {
         New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($cliGame)) -Force | Out-Null
         [System.IO.File]::WriteAllBytes($cliGame, [byte[]](1, 2, 3))
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Core.psm1') -Destination $cliRoot
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.SaveGuardian.psm1') -Destination $cliRoot
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.ps1') -Destination $cliRoot
         Write-CloudCartridgeJsonAtomic -InputObject ([PSCustomObject]@{
             local_roms_path = $cliLibrary
@@ -222,8 +224,10 @@ try {
         Assert-True ($jobs.Count -eq 3) 'Quantidade de jobs incorreta.'
         Assert-True ($jobs[0].catalog_id -eq 'game-b' -and $jobs[1].catalog_id -eq 'game-c' -and $jobs[2].catalog_id -eq 'game-a') 'Prioridades em ordem incorreta.'
 
-        $completed = Set-CloudCartridgeDownloadJobState -JournalPath $journalPath -JobId $first.job.job_id -State completed -BytesDownloaded 10 -TotalBytes 10
+        $testHash = ('a' * 64)
+        $completed = Set-CloudCartridgeDownloadJobState -JournalPath $journalPath -JobId $first.job.job_id -State completed -BytesDownloaded 10 -TotalBytes 10 -ContentSha256 $testHash
         Assert-True ($completed.state -eq 'completed' -and $completed.bytes_downloaded -eq 10) 'Estado do job nao persistiu.'
+        Assert-True ($completed.content_sha256 -eq $testHash) 'Checksum do job nao persistiu.'
         $replacement = Register-CloudCartridgeDownloadJob -JournalPath $journalPath -ManagedRoot $downloadRoot -FilePath $gameA -CatalogId 'game-a' -Priority current
         Assert-True (-not $replacement.deduplicated -and $replacement.job.job_id -ne $first.job.job_id) 'Job concluido bloqueou nova solicitacao.'
 
@@ -278,6 +282,76 @@ try {
         Assert-True (Test-Path -LiteralPath $updated.backup_path -PathType Leaf) 'Backup do conflito ausente.'
         Assert-True ((Get-Content -LiteralPath $updated.backup_path -Raw) -eq 'save-v1') 'Backup anterior incorreto.'
         Assert-True ((Get-Content -LiteralPath $destination -Raw) -eq 'save-v2') 'Destino atualizado incorretamente.'
+    }
+
+    Invoke-Test 'Save Guardian uses three-way hashes instead of timestamps' {
+        $guardianRoot = Join-Path $tempRoot 'guardian-decisions'
+        $local = Join-Path $guardianRoot 'local\game.srm'
+        $remote = Join-Path $guardianRoot 'remote\game.srm'
+        New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($local)) -Force | Out-Null
+        New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($remote)) -Force | Out-Null
+        [System.IO.File]::WriteAllText($local, 'base', [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText($remote, 'base', [System.Text.Encoding]::UTF8)
+        $baseline = (Get-CloudCartridgeSaveFingerprint -Path $local).sha256
+
+        [System.IO.File]::WriteAllText($local, 'local-progress', [System.Text.Encoding]::UTF8)
+        (Get-Item -LiteralPath $local).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-30)
+        (Get-Item -LiteralPath $remote).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(30)
+        $localChanged = Get-CloudCartridgeSaveDecision -LocalPath $local -RemotePath $remote -BaselineSha256 $baseline
+        Assert-True ($localChanged.decision -eq 'upload_versioned') 'Relogio venceu hash na decisao local.'
+
+        [System.IO.File]::WriteAllText($remote, 'remote-progress', [System.Text.Encoding]::UTF8)
+        $conflict = Get-CloudCartridgeSaveDecision -LocalPath $local -RemotePath $remote -BaselineSha256 $baseline
+        Assert-True ($conflict.decision -eq 'conflict') 'Duas alteracoes nao geraram conflito.'
+    }
+
+    Invoke-Test 'Save Guardian preserves both sides of a conflict' {
+        $guardianRoot = Join-Path $tempRoot 'guardian-conflict'
+        $localRoot = Join-Path $guardianRoot 'local'
+        $remoteRoot = Join-Path $guardianRoot 'remote'
+        $historyRoot = Join-Path $guardianRoot 'history'
+        $manifestPath = Join-Path $guardianRoot 'manifest.json'
+        $local = Join-Path $localRoot 'game.srm'
+        $remote = Join-Path $remoteRoot 'game.srm'
+        New-Item -ItemType Directory -Path $localRoot, $remoteRoot -Force | Out-Null
+        [System.IO.File]::WriteAllText($local, 'base', [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText($remote, 'base', [System.Text.Encoding]::UTF8)
+        $seed = Invoke-CloudCartridgeSaveReconcile -SaveKey 'game|core|region' -LocalPath $local -RemotePath $remote -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath $manifestPath -HistoryRoot $historyRoot -Apply
+        Assert-True ($seed.applied -and $seed.decision -eq 'in_sync') 'Manifesto inicial nao foi confirmado.'
+
+        [System.IO.File]::WriteAllText($local, 'local-progress', [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText($remote, 'remote-progress', [System.Text.Encoding]::UTF8)
+        $preview = Invoke-CloudCartridgeSaveReconcile -SaveKey 'game|core|region' -LocalPath $local -RemotePath $remote -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath $manifestPath -HistoryRoot $historyRoot
+        Assert-True (-not $preview.applied -and $preview.decision -eq 'conflict') 'Preview nao detectou conflito.'
+        $applied = Invoke-CloudCartridgeSaveReconcile -SaveKey 'game|core|region' -LocalPath $local -RemotePath $remote -LocalRoot $localRoot -RemoteRoot $remoteRoot -ManifestPath $manifestPath -HistoryRoot $historyRoot -Apply
+        Assert-True ($applied.action -eq 'conflict_preserved' -and @($applied.preserved).Count -eq 2) 'Conflito nao preservou os dois lados.'
+        Assert-True ((Get-Content -LiteralPath $local -Raw) -eq 'local-progress') 'Conflito sobrescreveu o save local.'
+        Assert-True ((Get-Content -LiteralPath $remote -Raw) -eq 'remote-progress') 'Conflito sobrescreveu o save remoto.'
+        foreach ($snapshot in $applied.preserved) { Assert-True (Test-Path -LiteralPath $snapshot -PathType Leaf) 'Snapshot de conflito ausente.' }
+    }
+
+    Invoke-Test 'Save doctor detects RetroArch path changes and legacy save' {
+        $doctorRoot = Join-Path $tempRoot 'save-doctor'
+        $oldSaveRoot = Join-Path $doctorRoot 'old-saves'
+        $newSaveRoot = Join-Path $doctorRoot 'new-saves'
+        $baseConfig = Join-Path $doctorRoot 'retroarch.cfg'
+        $overrideConfig = Join-Path $doctorRoot 'game.cfg'
+        New-Item -ItemType Directory -Path $oldSaveRoot, $newSaveRoot -Force | Out-Null
+        [System.IO.File]::WriteAllText($baseConfig, "savefile_directory = `"$oldSaveRoot`"`nsort_savefiles_enable = `"false`"", [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText($overrideConfig, "savefile_directory = `"$newSaveRoot`"`nsort_savefiles_enable = `"true`"", [System.Text.Encoding]::UTF8)
+        $settings = Read-CloudCartridgeRetroArchSaveSettings -ConfigPaths @($baseConfig, $overrideConfig)
+        Assert-True ($settings.savefile_directory -eq $newSaveRoot -and $settings.sort_savefiles_enable) 'Override efetivo do RetroArch nao prevaleceu.'
+
+        $legacySave = Join-Path $oldSaveRoot 'Fixture Game.srm'
+        [System.IO.File]::WriteAllText($legacySave, 'legacy-progress', [System.Text.Encoding]::UTF8)
+        $report = Find-CloudCartridgeSaveCandidates -GameName 'Fixture Game' -CurrentDirectories @($newSaveRoot) -LegacyDirectories @($oldSaveRoot)
+        Assert-True ($report.status -eq 'found_legacy_save' -and $report.path_changed) 'Save legado nao foi reconhecido apos mudanca de caminho.'
+        Assert-True (@($report.candidates).Count -eq 1 -and $report.candidates[0].path -eq $legacySave) 'Candidato legado incorreto.'
+
+        $cliOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.ps1') save doctor --game-name 'Fixture Game' --current-dir $newSaveRoot --legacy-dir $oldSaveRoot --json 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "CLI save doctor falhou: $($cliOutput -join ' ')"
+        $cliReport = ($cliOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($cliReport.status -eq 'found_legacy_save' -and $cliReport.path_changed) 'CLI save doctor nao reportou mudanca de caminho.'
     }
 
     Invoke-Test 'Publish script has no force push' {
@@ -340,6 +414,11 @@ try {
         Assert-True (Test-Path -LiteralPath $registryPath -PathType Leaf) 'Telemetria nao criou registro isolado.'
         $registry = Get-Content -LiteralPath $registryPath -Raw -Encoding UTF8 | ConvertFrom-Json
         Assert-True (@($registry.games.PSObject.Properties).Count -eq 1) 'Registro isolado nao recebeu o jogo ficticio.'
+        $expectedHash = (Get-FileHash -LiteralPath $fakeGame -Algorithm SHA256).Hash.ToLowerInvariant()
+        Assert-True ($registry.games.$fakeGame.sha256 -eq $expectedHash) 'Registro isolado nao persistiu o SHA-256.'
+        $downloadJournal = Get-Content -LiteralPath (Join-Path $fixtureLibrary '.download_jobs.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ($downloadJournal.jobs[0].state -eq 'completed') 'Job isolado nao terminou como concluido.'
+        Assert-True ($downloadJournal.jobs[0].content_sha256 -eq $expectedHash) 'Journal isolado nao persistiu o SHA-256.'
     }
 
     Invoke-Test 'CLI doctor emits versioned JSON' {
