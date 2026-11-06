@@ -6,6 +6,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $repoRoot 'CloudCartridge.Core.psm1') -Force
 Import-Module (Join-Path $repoRoot 'CloudCartridge.SaveGuardian.psm1') -Force
 Import-Module (Join-Path $repoRoot 'CloudCartridge.Playlists.psm1') -Force
+Import-Module (Join-Path $repoRoot 'CloudCartridge.Host.psm1') -Force
 $script:passed = 0
 $script:failed = 0
 
@@ -612,6 +613,39 @@ try {
         $before = [System.IO.File]::ReadAllBytes($target) -join ','
         $preserved = Invoke-CloudCartridgeThumbnailDownload -Url 'https://thumbnails.libretro.com/System/Named_Boxarts/Game.png' -TargetPath $target -WebRequestAction { throw 'Nao deveria baixar novamente.' }
         Assert-True ($preserved.status -eq 'preserved_existing' -and ([System.IO.File]::ReadAllBytes($target) -join ',') -eq $before) 'Downloader sobrescreveu thumbnail existente.'
+    }
+
+    Invoke-Test 'Host enforces five guests, credentials and save isolation' {
+        $hostRoot = Join-Path $tempRoot 'private-host'
+        $databasePath = Join-Path $hostRoot 'admin\users.json'
+        $profiles = @()
+        for ($index = 1; $index -le 5; $index++) {
+            $profiles += New-CloudCartridgeHostProfile -DatabasePath $databasePath -DataRoot $hostRoot -DisplayName "Guest $index" -ProfileCode ("USR{0:D5}" -f $index)
+        }
+        $sixthDenied = $false
+        try { New-CloudCartridgeHostProfile -DatabasePath $databasePath -DataRoot $hostRoot -DisplayName 'Guest 6' -ProfileCode 'USR00006' | Out-Null } catch { $sixthDenied = $true }
+        Assert-True $sixthDenied 'Sexto convidado ativo foi aceito.'
+        $databaseText = Get-Content -LiteralPath $databasePath -Raw -Encoding UTF8
+        Assert-True (-not $databaseText.Contains($profiles[0].recovery_key) -and -not $databaseText.Contains($profiles[0].device_token)) 'Segredo foi persistido em texto puro.'
+        Assert-True (Test-CloudCartridgeHostDeviceCredential -DatabasePath $databasePath -ProfileId $profiles[0].profile_id -DeviceToken $profiles[0].device_token) 'Credencial valida foi recusada.'
+        Assert-True (-not (Test-CloudCartridgeHostDeviceCredential -DatabasePath $databasePath -ProfileId $profiles[0].profile_id -DeviceToken $profiles[0].profile_code)) 'Codigo curto autenticou como segredo.'
+        Assert-True (-not (Test-CloudCartridgeHostDeviceCredential -DatabasePath $databasePath -ProfileId $profiles[1].profile_id -DeviceToken $profiles[0].device_token)) 'Token do usuario A autenticou usuario B.'
+        $ownPath = Get-CloudCartridgeAuthorizedSavePath -DatabasePath $databasePath -DataRoot $hostRoot -ProfileId $profiles[0].profile_id -DeviceToken $profiles[0].device_token -RelativePath 'retroarch\game.srm'
+        Assert-True ($ownPath.StartsWith($profiles[0].save_root, [System.StringComparison]::OrdinalIgnoreCase)) 'Save autorizado saiu do perfil.'
+        $traversalDenied = $false
+        try { Get-CloudCartridgeAuthorizedSavePath -DatabasePath $databasePath -DataRoot $hostRoot -ProfileId $profiles[0].profile_id -DeviceToken $profiles[0].device_token -RelativePath '..\other\game.srm' | Out-Null } catch { $traversalDenied = $true }
+        Assert-True $traversalDenied 'Traversal escapou da pasta privada.'
+        $recoveryDenied = $false
+        try { New-CloudCartridgeRecoveredDevice -DatabasePath $databasePath -ProfileCode $profiles[0].profile_code -RecoveryKey 'wrong-key' | Out-Null } catch { $recoveryDenied = $true }
+        Assert-True $recoveryDenied 'Recovery key incorreta foi aceita.'
+        $recovered = New-CloudCartridgeRecoveredDevice -DatabasePath $databasePath -ProfileCode $profiles[0].profile_code -RecoveryKey $profiles[0].recovery_key
+        Assert-True (Test-CloudCartridgeHostDeviceCredential -DatabasePath $databasePath -ProfileId $profiles[0].profile_id -DeviceToken $recovered.device_token) 'Novo dispositivo recuperado nao autenticou.'
+        $saveRootBeforeRevoke = $profiles[0].save_root
+        $null = Revoke-CloudCartridgeHostProfile -DatabasePath $databasePath -ProfileCode $profiles[0].profile_code
+        Assert-True (-not (Test-CloudCartridgeHostDeviceCredential -DatabasePath $databasePath -ProfileId $profiles[0].profile_id -DeviceToken $profiles[0].device_token)) 'Perfil revogado ainda autenticou.'
+        Assert-True (Test-Path -LiteralPath $saveRootBeforeRevoke -PathType Container) 'Revogacao apagou saves.'
+        $replacement = New-CloudCartridgeHostProfile -DatabasePath $databasePath -DataRoot $hostRoot -DisplayName 'Replacement' -ProfileCode 'USR00006'
+        Assert-True ($replacement.profile_id -ne $profiles[0].profile_id) 'Novo slot reutilizou UUID revogado.'
     }
 
     Invoke-Test 'Publish script has no force push' {

@@ -33,10 +33,11 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 - Fase 3 iniciada com merge incremental/idempotente de playlists, preservando customizações.
 - `.m3u`, índice incremental e reparo exclusivamente de thumbnails ausentes estão integrados ao CLI.
 - Índice passou com 20 mil arquivos; inventário agregado e downloader PNG oficial validado estão integrados.
+- Fase 4 iniciada: cinco convidados, credenciais, recovery e isolamento de saves por UUID validados.
 
 ## Evidência atual
 
-- `Testar_CloudCartridge.cmd`: 34 aprovados, 0 falhas.
+- `Testar_CloudCartridge.cmd`: 35 aprovados, 0 falhas.
 - Smoke real em PowerShell 5.1 do Launcher e Telemetria com fixture temporária.
 - `doctor --json`: RetroArch detectado, 45/46 mapeamentos de core detectados, 6/6 mapeamentos standalone (5 executáveis únicos).
 - Alertas atuais: `config.json` local ausente, destino de Cloud Save não configurado e Wii U ainda com mapeamento `DETECT`.
@@ -51,7 +52,7 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 
 ## Próxima ação
 
-Cruzar inventário com compatibilidade e iniciar Host privado da Fase 4; manter adaptadores reais de save como validação dependente de emulador.
+Adicionar convites de uso único, proteção DPAPI, API LAN autenticada e monitor do Host; manter adaptadores reais de save como validação dependente de emulador.
 
 Comando de retomada:
 
