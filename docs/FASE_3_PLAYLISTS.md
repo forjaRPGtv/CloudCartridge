@@ -13,14 +13,17 @@ Os scripts históricos foram encontrados em `RetroArch-Tools/scripts`. Eles cont
 - Apenas jogos ausentes são adicionados; itens temporariamente offline não são removidos.
 - Prévia por padrão e gravação JSON atômica somente com aplicação explícita.
 - Duas varreduras sucessivas geram hash idêntico.
+- `.m3u` substitui apenas os discos que referencia e que realmente existem; discos avulsos permanecem visíveis.
+- Índice persistente reaproveita metadados de arquivos cujo tamanho e `mtime` não mudaram.
+- Reparo de thumbnails só cria arquivos ausentes por troca final; arte existente nunca é aberta para escrita.
+- CLI: `library index`, `playlist sync` e `thumbnails plan`, com prévia por padrão.
 
 ## Evidência
 
-A suíte completa está em **29 testes aprovados, 0 falhas**. O teste de playlist preserva rótulo, core e propriedades customizadas, adiciona somente um jogo ausente e comprova idempotência por SHA-256.
+A suíte completa está em **32 testes aprovados, 0 falhas**. Além da idempotência por SHA-256, os testes cobrem `.m3u`, atualização incremental do índice e preservação byte a byte de thumbnail personalizada.
 
 ## Próximos pontos
 
-- Tratamento seguro de `.m3u` sem esconder discos que não pertencem ao manifesto.
-- Índice persistente para bibliotecas grandes.
-- Reparo de thumbnails exclusivamente ausentes, sem sobrescrever arte personalizada.
-- CLI e relatório de inventário por sistema.
+- Medição de desempenho com biblioteca equivalente a 20 mil títulos.
+- Downloader oficial de thumbnails com validação de conteúdo e retomada.
+- Relatório agregado de inventário/compatibilidade por sistema.

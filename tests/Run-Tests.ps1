@@ -184,6 +184,7 @@ try {
         [System.IO.File]::WriteAllBytes($cliGame, [byte[]](1, 2, 3))
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Core.psm1') -Destination $cliRoot
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.SaveGuardian.psm1') -Destination $cliRoot
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.Playlists.psm1') -Destination $cliRoot
         Copy-Item -LiteralPath (Join-Path $repoRoot 'CloudCartridge.ps1') -Destination $cliRoot
         Write-CloudCartridgeJsonAtomic -InputObject ([PSCustomObject]@{
             local_roms_path = $cliLibrary
@@ -509,6 +510,64 @@ try {
         Assert-True ($after.custom_root_setting -eq 'keep-me') 'Configuracao customizada da playlist foi perdida.'
         $kept = @($after.items | Where-Object { $_.path -eq $existingRom })[0]
         Assert-True ($kept.label -eq 'My Custom Label' -and $kept.custom_item_setting -eq 'keep-item' -and $kept.core_path -eq 'special-core.dll') 'Entrada customizada foi reescrita.'
+        $cliOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.ps1') playlist sync --rom-root $romRoot --playlist $playlistPath --json 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "CLI playlist sync falhou: $($cliOutput -join ' ')"
+        $cliPreview = ($cliOutput -join "`n") | ConvertFrom-Json
+        Assert-True ($cliPreview.dry_run -and -not $cliPreview.applied -and $cliPreview.added -eq 0) 'CLI playlist nao respeitou preview/idempotencia.'
+    }
+
+    Invoke-Test 'M3U hides only referenced discs' {
+        $romRoot = Join-Path $tempRoot 'm3u-candidates'
+        New-Item -ItemType Directory -Path $romRoot -Force | Out-Null
+        $disc1 = Join-Path $romRoot 'Game (Disc 1).chd'
+        $disc2 = Join-Path $romRoot 'Game (Disc 2).chd'
+        $orphan = Join-Path $romRoot 'Other Game (Disc 2).chd'
+        $m3u = Join-Path $romRoot 'Game.m3u'
+        foreach ($path in @($disc1, $disc2, $orphan)) { [System.IO.File]::WriteAllBytes($path, [byte[]](1)) }
+        [System.IO.File]::WriteAllText($m3u, "Game (Disc 1).chd`nGame (Disc 2).chd", [System.Text.Encoding]::UTF8)
+        $candidates = @(Get-CloudCartridgeRomCandidates -RomRoot $romRoot)
+        Assert-True (@($candidates | Where-Object { $_.path -eq $m3u }).Count -eq 1) 'Manifesto M3U nao entrou na lista.'
+        Assert-True (@($candidates | Where-Object { $_.path -in @($disc1, $disc2) }).Count -eq 0) 'Discos cobertos pelo M3U ficaram duplicados.'
+        Assert-True (@($candidates | Where-Object { $_.path -eq $orphan }).Count -eq 1) 'Disco avulso foi ocultado indevidamente.'
+    }
+
+    Invoke-Test 'Catalog index reuses unchanged entries' {
+        $libraryRoot = Join-Path $tempRoot 'catalog-library'
+        $systemRoot = Join-Path $libraryRoot 'Fixture System'
+        $indexPath = Join-Path $tempRoot 'catalog-index.json'
+        New-Item -ItemType Directory -Path $systemRoot -Force | Out-Null
+        $gameA = Join-Path $systemRoot 'Game A.zip'
+        $gameB = Join-Path $systemRoot 'Game B.chd'
+        [System.IO.File]::WriteAllBytes($gameA, [byte[]](1, 2))
+        [System.IO.File]::WriteAllBytes($gameB, [byte[]](3, 4, 5))
+        $first = Update-CloudCartridgeCatalogIndex -LibraryRoot $libraryRoot -IndexPath $indexPath -Apply
+        $firstHash = (Get-FileHash -LiteralPath $indexPath -Algorithm SHA256).Hash
+        $second = Update-CloudCartridgeCatalogIndex -LibraryRoot $libraryRoot -IndexPath $indexPath -Apply
+        $secondHash = (Get-FileHash -LiteralPath $indexPath -Algorithm SHA256).Hash
+        Assert-True ($first.total -eq 2 -and $second.reused -eq 2 -and $second.updated -eq 0) 'Indice nao reutilizou entradas estaveis.'
+        Assert-True ($firstHash -eq $secondHash) 'Indice identico foi regravado.'
+        [System.IO.File]::WriteAllBytes($gameB, [byte[]](3, 4, 5, 6))
+        $third = Update-CloudCartridgeCatalogIndex -LibraryRoot $libraryRoot -IndexPath $indexPath -Apply
+        Assert-True ($third.reused -eq 1 -and $third.updated -eq 1) 'Mudanca incremental nao foi detectada.'
+    }
+
+    Invoke-Test 'Thumbnail repair never overwrites custom art' {
+        $thumbRoot = Join-Path $tempRoot 'thumbnail-repair'
+        New-Item -ItemType Directory -Path $thumbRoot -Force | Out-Null
+        $custom = Join-Path $thumbRoot 'Custom Game.png'
+        [System.IO.File]::WriteAllBytes($custom, [byte[]](9, 9, 9))
+        $items = @([PSCustomObject]@{ label = 'Custom Game' }, [PSCustomObject]@{ label = 'Missing Game' })
+        $fetchCounter = [PSCustomObject]@{ Value = 0 }
+        $results = @(Repair-CloudCartridgeMissingThumbnails -PlaylistItems $items -ThumbnailDirectory $thumbRoot -Apply -Fetcher {
+            param($item, $target)
+            $fetchCounter.Value++
+            [System.IO.File]::WriteAllBytes($target, [byte[]](1, 2, 3))
+            return $true
+        })
+        Assert-True (($results | Where-Object label -eq 'Custom Game').decision -eq 'preserved_existing') 'Arte customizada nao foi preservada.'
+        Assert-True (([System.IO.File]::ReadAllBytes($custom) -join ',') -eq '9,9,9') 'Arte customizada foi sobrescrita.'
+        Assert-True (($results | Where-Object label -eq 'Missing Game').decision -eq 'downloaded') 'Thumbnail ausente nao foi reparada.'
+        Assert-True ($fetchCounter.Value -eq 1) 'Fetcher foi chamado para arte existente.'
     }
 
     Invoke-Test 'Publish script has no force push' {

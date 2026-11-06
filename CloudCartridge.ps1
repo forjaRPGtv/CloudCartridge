@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 $scriptDir = $PSScriptRoot
 Import-Module (Join-Path $scriptDir 'CloudCartridge.Core.psm1') -Force
 Import-Module (Join-Path $scriptDir 'CloudCartridge.SaveGuardian.psm1') -Force
+Import-Module (Join-Path $scriptDir 'CloudCartridge.Playlists.psm1') -Force
 
 $jsonOutput = $Arguments -contains '--json'
 $confirmed = $Arguments -contains '--yes'
@@ -372,7 +373,36 @@ switch ($Command.ToLowerInvariant()) {
             default { throw 'Use: cloudcartridge save doctor|reconcile|queue|jobs|sync|versions|restore [opcoes]' }
         }
     }
+    'library' {
+        $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'index' }
+        if ($subcommand -ne 'index') { throw 'Use: cloudcartridge library index --root <pasta> --index <arquivo> [--yes] [--json]' }
+        $libraryRoot = Get-ArgumentValue '--root'
+        $indexPath = Get-ArgumentValue '--index'
+        if ([string]::IsNullOrWhiteSpace($libraryRoot) -or [string]::IsNullOrWhiteSpace($indexPath)) { throw 'Use: cloudcartridge library index --root <pasta> --index <arquivo> [--yes] [--json]' }
+        Write-Result (Update-CloudCartridgeCatalogIndex -LibraryRoot $libraryRoot -IndexPath $indexPath -Apply:$confirmed)
+    }
+    'playlist' {
+        $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'sync' }
+        if ($subcommand -ne 'sync') { throw 'Use: cloudcartridge playlist sync --rom-root <pasta> --playlist <arquivo> [--core-path <arquivo>] [--core-name <nome>] [--yes] [--json]' }
+        $romRoot = Get-ArgumentValue '--rom-root'
+        $playlistPath = Get-ArgumentValue '--playlist'
+        $corePath = Get-ArgumentValue '--core-path'
+        $coreName = Get-ArgumentValue '--core-name'
+        if ([string]::IsNullOrWhiteSpace($romRoot) -or [string]::IsNullOrWhiteSpace($playlistPath)) { throw 'Use: cloudcartridge playlist sync --rom-root <pasta> --playlist <arquivo> [--core-path <arquivo>] [--core-name <nome>] [--yes] [--json]' }
+        if ([string]::IsNullOrWhiteSpace($corePath)) { $corePath = 'DETECT' }
+        if ([string]::IsNullOrWhiteSpace($coreName)) { $coreName = 'DETECT' }
+        $candidates = @(Get-CloudCartridgeRomCandidates -RomRoot $romRoot)
+        Write-Result (Merge-CloudCartridgePlaylist -PlaylistPath $playlistPath -DiscoveredItems $candidates -DefaultCorePath $corePath -DefaultCoreName $coreName -Apply:$confirmed)
+    }
+    'thumbnails' {
+        $subcommand = if ($filteredArguments.Count -gt 0) { $filteredArguments[0] } else { 'plan' }
+        $playlistPath = Get-ArgumentValue '--playlist'
+        $thumbnailDirectory = Get-ArgumentValue '--directory'
+        if ($subcommand -ne 'plan' -or [string]::IsNullOrWhiteSpace($playlistPath) -or [string]::IsNullOrWhiteSpace($thumbnailDirectory)) { throw 'Use: cloudcartridge thumbnails plan --playlist <arquivo> --directory <pasta> [--json]' }
+        $playlistData = Get-Content -LiteralPath $playlistPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        Write-Result @(Repair-CloudCartridgeMissingThumbnails -PlaylistItems @($playlistData.items) -ThumbnailDirectory $thumbnailDirectory)
+    }
     default {
-        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache, downloads ou save."
+        throw "Comando desconhecido: $Command. Use status, doctor, detect, emulators, cores, cache, downloads, save, library, playlist ou thumbnails."
     }
 }

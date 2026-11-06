@@ -66,9 +66,99 @@ function Get-CloudCartridgeRomCandidates {
         [string[]]$Extensions = @('.7z', '.zip', '.chd', '.rvz', '.iso', '.gdi', '.cue', '.m3u', '.bin', '.rom')
     )
     if (-not (Test-Path -LiteralPath $RomRoot -PathType Container)) { return @() }
-    return @(Get-ChildItem -LiteralPath $RomRoot -Recurse -File | Where-Object { $_.Extension.ToLowerInvariant() -in $Extensions } | ForEach-Object {
+    $allFiles = @(Get-ChildItem -LiteralPath $RomRoot -Recurse -File | Where-Object { $_.Extension.ToLowerInvariant() -in $Extensions })
+    $discMembers = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($manifest in @($allFiles | Where-Object { $_.Extension -ieq '.m3u' })) {
+        foreach ($line in Get-Content -LiteralPath $manifest.FullName -Encoding UTF8) {
+            $reference = $line.Trim()
+            if (-not $reference -or $reference.StartsWith('#')) { continue }
+            $resolved = if ([System.IO.Path]::IsPathRooted($reference)) { $reference } else { Join-Path $manifest.DirectoryName $reference }
+            if ((Test-CloudCartridgePathWithinRoot -Path $resolved -Root $RomRoot) -and (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+                $null = $discMembers.Add([System.IO.Path]::GetFullPath($resolved))
+            }
+        }
+    }
+    return @($allFiles | Where-Object { -not $discMembers.Contains($_.FullName) } | ForEach-Object {
         [PSCustomObject]@{ path = $_.FullName; label = $_.BaseName }
     })
 }
 
-Export-ModuleMember -Function @('Merge-CloudCartridgePlaylist', 'Get-CloudCartridgeRomCandidates')
+function Update-CloudCartridgeCatalogIndex {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$LibraryRoot,
+        [Parameter(Mandatory = $true)][string]$IndexPath,
+        [string[]]$Extensions = @('.7z', '.zip', '.chd', '.rvz', '.iso', '.gdi', '.cue', '.m3u', '.bin', '.rom'),
+        [switch]$Apply
+    )
+    $previous = @{}
+    if (Test-Path -LiteralPath $IndexPath -PathType Leaf) {
+        $oldIndex = Get-Content -LiteralPath $IndexPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($entry in @($oldIndex.items)) { $previous[[string]$entry.path] = $entry }
+    }
+    $items = @()
+    $reused = 0
+    $updated = 0
+    foreach ($file in @(Get-ChildItem -LiteralPath $LibraryRoot -Recurse -File | Where-Object { $_.Extension.ToLowerInvariant() -in $Extensions } | Sort-Object FullName)) {
+        $old = $previous[$file.FullName]
+        $modified = $file.LastWriteTimeUtc.ToString('o')
+        if ($old -and [long]$old.size -eq [long]$file.Length -and [string]$old.modified_utc -eq $modified) {
+            $items += $old
+            $reused++
+        } else {
+            $relative = $file.FullName.Substring([System.IO.Path]::GetFullPath($LibraryRoot).TrimEnd('\').Length).TrimStart('\')
+            $system = if ($relative.Contains('\')) { $relative.Split('\')[0] } else { '' }
+            $items += [PSCustomObject][ordered]@{
+                catalog_id = Get-CloudCartridgeCatalogIdForPath -Path $file.FullName
+                system = $system
+                path = $file.FullName
+                label = $file.BaseName
+                extension = $file.Extension.ToLowerInvariant()
+                size = [long]$file.Length
+                modified_utc = $modified
+            }
+            $updated++
+        }
+    }
+    $index = [PSCustomObject][ordered]@{ schema_version = 1; library_root = [System.IO.Path]::GetFullPath($LibraryRoot); generated_utc = [DateTime]::UtcNow.ToString('o'); items = $items }
+    if ($Apply -and ($updated -gt 0 -or $items.Count -ne $previous.Count)) { Write-CloudCartridgeJsonAtomic -InputObject $index -Path $IndexPath -Depth 8 }
+    return [PSCustomObject]@{ applied = [bool]$Apply; dry_run = -not $Apply; total = $items.Count; reused = $reused; updated = $updated; index_path = $IndexPath; index = $index }
+}
+
+function Repair-CloudCartridgeMissingThumbnails {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object[]]$PlaylistItems,
+        [Parameter(Mandatory = $true)][string]$ThumbnailDirectory,
+        [scriptblock]$Fetcher,
+        [switch]$Apply
+    )
+    $results = @()
+    foreach ($item in $PlaylistItems) {
+        $safeLabel = ([string]$item.label) -replace '[&*/:`"<>?\\|]', '_'
+        $target = Join-Path $ThumbnailDirectory "$safeLabel.png"
+        if (Test-Path -LiteralPath $target -PathType Leaf) {
+            $results += [PSCustomObject]@{ label = $item.label; path = $target; decision = 'preserved_existing' }
+            continue
+        }
+        if (-not $Apply) {
+            $results += [PSCustomObject]@{ label = $item.label; path = $target; decision = 'missing' }
+            continue
+        }
+        if (-not $Fetcher) { throw 'Fetcher obrigatorio para aplicar reparo de thumbnail.' }
+        New-Item -ItemType Directory -Path $ThumbnailDirectory -Force | Out-Null
+        $temporary = "$target.partial"
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+        $fetched = [bool](& $Fetcher $item $temporary)
+        if ($fetched -and (Test-Path -LiteralPath $temporary -PathType Leaf)) {
+            Move-Item -LiteralPath $temporary -Destination $target
+            $results += [PSCustomObject]@{ label = $item.label; path = $target; decision = 'downloaded' }
+        } else {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+            $results += [PSCustomObject]@{ label = $item.label; path = $target; decision = 'failed' }
+        }
+    }
+    return $results
+}
+
+Export-ModuleMember -Function @('Merge-CloudCartridgePlaylist', 'Get-CloudCartridgeRomCandidates', 'Update-CloudCartridgeCatalogIndex', 'Repair-CloudCartridgeMissingThumbnails')
