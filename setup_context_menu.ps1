@@ -41,14 +41,12 @@ foreach ($ext in $extensions) {
     Set-ItemProperty -LiteralPath $keyPlay -Name '(Default)' -Value "Jogar com CloudCartridge Telemetria"
     Set-ItemProperty -LiteralPath $cmdPlay -Name '(Default)' -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$telemetryScript`" -FilePath `"%1`" -LaunchAfter"
 
-    # 2. Liberar Espaco no PC (Manter na Nuvem)
+    # Remover o comando legado: attrib +u/-p so e comprovavel em provedores
+    # Windows Files On-Demand/CFAPI. O Google Drive em modo streaming usa um
+    # volume virtual e gerencia seu proprio cache.
     $keyFree = "HKCU:\Software\Classes\SystemFileAssociations\$ext\shell\CloudROM_Free"
-    $cmdFree = "$keyFree\command"
-    if (-not (Test-Path -LiteralPath $cmdFree)) {
-        New-Item -Path $cmdFree -Force | Out-Null
-    }
-    Set-ItemProperty -LiteralPath $keyFree -Name '(Default)' -Value "CloudCartridge: Liberar Espaco no PC (Manter na Nuvem)"
-    Set-ItemProperty -LiteralPath $cmdFree -Name '(Default)' -Value "attrib.exe +u -p `"%1`""
+    if (Test-Path -LiteralPath $keyFree) { Remove-Item -LiteralPath $keyFree -Recurse -Force }
 }
 
-Write-Host "Menu de contexto registrado com sucesso para $($extensions.Count) tipos de ROMs e ISOs!" -ForegroundColor Green
+Write-Host "Menu Jogar com CloudCartridge registrado para $($extensions.Count) tipos de ROMs e ISOs." -ForegroundColor Green
+Write-Host 'A liberacao de cache do Google Drive streaming permanece sob controle do Google Drive para Desktop.' -ForegroundColor Yellow

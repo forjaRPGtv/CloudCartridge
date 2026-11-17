@@ -317,6 +317,19 @@ function Get-CloudCartridgeCacheCleanupPlan {
     return $plan
 }
 
+function Test-CloudCartridgeDehydratedState {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $attributes = [int64](Get-Item -LiteralPath $Path -Force).Attributes
+    $unpinned = ($attributes -band 0x00100000) -ne 0
+    $providerBacked = ($attributes -band 0x00000400) -ne 0 -or
+        ($attributes -band 0x00001000) -ne 0 -or
+        ($attributes -band 0x00040000) -ne 0 -or
+        ($attributes -band 0x00400000) -ne 0
+    return $unpinned -and $providerBacked
+}
+
 function Invoke-CloudCartridgeCacheCleanup {
     [CmdletBinding()]
     param(
@@ -338,11 +351,16 @@ function Invoke-CloudCartridgeCacheCleanup {
             continue
         }
         try {
+            $failureReason = 'dehydrate_failed'
             $success = if ($DehydrateAction) {
                 [bool](& $DehydrateAction $row.path)
             } else {
                 $process = Start-Process -FilePath 'attrib.exe' -ArgumentList '+u', '-p', "`"$($row.path)`"" -NoNewWindow -Wait -PassThru
-                $process.ExitCode -eq 0
+                if ($process.ExitCode -ne 0) { $false } else {
+                    $confirmed = Test-CloudCartridgeDehydratedState -Path $row.path
+                    if (-not $confirmed) { $failureReason = 'dehydrate_not_confirmed' }
+                    $confirmed
+                }
             }
             if ($success) {
                 $registry.games.($row.path).status = 'cloud_only'
@@ -351,7 +369,7 @@ function Invoke-CloudCartridgeCacheCleanup {
                 $changed = $true
             } else {
                 $row.decision = 'failed'
-                $row.reason = 'dehydrate_failed'
+                $row.reason = $failureReason
             }
         } catch {
             $row.decision = 'failed'
@@ -564,6 +582,7 @@ Export-ModuleMember -Function @(
     'Copy-CloudCartridgeSaveSafely',
     'Set-CloudCartridgeCachePin',
     'Get-CloudCartridgeCacheCleanupPlan',
+    'Test-CloudCartridgeDehydratedState',
     'Invoke-CloudCartridgeCacheCleanup',
     'Get-CloudCartridgeCatalogIdForPath',
     'Register-CloudCartridgeDownloadJob',

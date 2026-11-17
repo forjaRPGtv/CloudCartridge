@@ -11,7 +11,7 @@ if (-not $OutputPath) {
 }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 
-$excludedDirectories = @('.git', 'host-data', 'backups', 'dist', '.cache', 'logs')
+$excludedDirectories = @('.git', '.tmp', 'host-data', 'backups', 'dist', '.cache', 'logs')
 $excludedNames = @('config.json', 'standalone_emulators.json', '.cache_registry.json', '.download_jobs.json')
 $files = @(Get-ChildItem -LiteralPath $root -File -Recurse | Where-Object {
     $relative = $_.FullName.Substring($root.Length).TrimStart('\', '/')

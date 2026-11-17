@@ -15,10 +15,10 @@
 - Monitor fixture aprovado e redigido.
 - Empacotamento fixture aprovado, sem dados de runtime ou segredos.
 - Estrutura/frontmatter e limites da Skill cobertos pela suíte.
-- Suíte integral: **43 testes aprovados, 0 falhas**.
+- Suíte integral atual: **45 testes aprovados, 0 falhas**.
 
 O validador oficial da Skill não iniciou porque o Python disponível não possui PyYAML. A dependência não foi instalada sem autorização; a mesma estrutura essencial está coberta pela regressão local.
 
 ## Validações externas pendentes
 
-CFAPI real, DPAPI interativo, dois PCs em rede privada e MiSTer físico continuam pendentes. Nenhum deles foi inferido a partir dos fixtures.
+DPAPI interativo e Save Guardian com armazenamento real foram aprovados em 2026-11-17. O Google Drive streaming observado gerencia o cache em volume virtual e não fornece estado CFAPI confirmável por `attrib`. Dois PCs em rede privada e MiSTer físico continuam pendentes; nenhum deles foi inferido a partir dos fixtures.

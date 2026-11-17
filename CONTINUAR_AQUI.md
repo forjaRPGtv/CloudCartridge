@@ -15,21 +15,30 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 
 ## Evidência atual
 
-- `Testar_CloudCartridge.cmd`: **43 aprovados, 0 falhas**.
+- `Testar_CloudCartridge.cmd`: **45 aprovados, 0 falhas**.
 - Benchmark de catálogo com 20 mil títulos dentro do limite de segurança.
 - Listener HTTP loopback real testado; porta efêmera escolhida pelo Windows para evitar colisão no teste.
 - Instalador testado em cópia temporária: prévia não grava; aplicação cria configuração; segunda aplicação cria backup.
 - Pacote fixture: README e manifesto SHA-256 presentes; zero config, banco Host, backup, log, cache, credencial ou ZIP aninhado.
 - Skill validada por regressão estrutural local. O `quick_validate.py` oficial não executou porque PyYAML não está instalado; nenhuma dependência foi instalada sem autorização.
 
-## Limites ainda externos
+## Gate real de 2026-11-17
+
+- Configuração local aplicada; `doctor --json` em `status: ok`, 45/45 cores e 6/6 mapeamentos standalone.
+- Caminhos de saves e savestates do RetroArch corrigidos para `Z:\_ISOS_ROMS_\_RA_SAVES`, com backup e SHA-256 anterior.
+- DPAPI real aprovado no perfil Windows interativo; arquivo e credenciais aleatórias do teste removidos.
+- Save Guardian real aprovado em upload, hash, estado sincronizado, atualização versionada e preservação de versão; artefatos sintéticos locais/remotos removidos.
+- Wii U removido da lista de cores RetroArch incompletos e preservado como Cemu standalone.
+- Menu de contexto atualizado para a telemetria atual; ação legada de `attrib` removida.
+
+## Limites ainda externos ou do provedor
 
 Não declarar como validados sem ambiente apropriado:
 
-- hidratação/desidratação CFAPI real do Google Drive;
-- DPAPI no perfil Windows interativo do usuário;
 - fluxo LAN/VPN entre dois PCs físicos;
 - transferência, estrutura PSX/CHD e save em MiSTer físico.
+
+O Google Drive streaming observado é um volume virtual, não um placeholder NTFS/CFAPI. A leitura e a integridade foram validadas, mas a liberação física exata após três dias permanece sob o gerenciador automático de cache do Google Drive para Desktop. `attrib` com código zero sem mudança de estado não é mais aceito como sucesso.
 
 O Host e o MiSTer estão implementados e cobertos por fixtures, mas esses quatro gates físicos continuam pendentes. Não testar com saves reais sem autorização explícita e backup.
 

@@ -53,6 +53,13 @@ try {
         }
     }
 
+    Invoke-Test 'Standalone-only systems are not unresolved RetroArch cores' {
+        $coreMappings = Get-Content -LiteralPath (Join-Path $repoRoot 'core_mapping.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $standaloneMappings = Get-Content -LiteralPath (Join-Path $repoRoot 'standalone_emulators.template.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ($null -eq $coreMappings.'Nintendo - Wii U') 'Wii U ainda aparece como core RetroArch nao configurado.'
+        Assert-True ($null -ne $standaloneMappings.'Nintendo - Wii U') 'Wii U perdeu o mapeamento standalone do Cemu.'
+    }
+
     Invoke-Test 'Default config is stable' {
         $config = Get-CloudCartridgeConfig -ConfigPath (Join-Path $tempRoot 'missing.json')
         Assert-True ($config.retention_days -eq 3) 'Retencao padrao incorreta.'
@@ -176,6 +183,12 @@ try {
         Assert-True (($failed | Where-Object path -eq $expiredPath).decision -eq 'failed') 'Falha de desidratacao nao foi reportada.'
         $afterFailure = Get-Content -LiteralPath $cleanupRegistry -Raw -Encoding UTF8 | ConvertFrom-Json
         Assert-True ($afterFailure.games.$expiredPath.status -eq 'local_cached') 'Falha marcou cache como removido.'
+
+        Assert-True (-not (Test-CloudCartridgeDehydratedState -Path $expiredPath)) 'Arquivo NTFS comum foi confundido com placeholder desidratado.'
+        $unconfirmed = @(Invoke-CloudCartridgeCacheCleanup -RegistryPath $cleanupRegistry -ManagedRoot $cleanupRoot -RetentionDays 3 -CleanupEnabled $true)
+        Assert-True (($unconfirmed | Where-Object path -eq $expiredPath).decision -eq 'failed') 'Comando sem desidratacao real foi aceito.'
+        $afterUnconfirmed = Get-Content -LiteralPath $cleanupRegistry -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ($afterUnconfirmed.games.$expiredPath.status -eq 'local_cached') 'Desidratacao nao confirmada alterou o registro.'
     }
 
     Invoke-Test 'CLI cache cleanup previews without changing registry' {
@@ -435,6 +448,11 @@ try {
         Assert-True ($conflict.conflict -and $conflict.action -eq 'block_double_sync') 'Dois motores de sync foram aceitos.'
         $nativeOnly = Get-CloudCartridgeNativeSaveSyncState -ConfigPaths @($syncConfig) -CloudCartridgeSyncEnabled $false
         Assert-True (-not $nativeOnly.conflict) 'Sync nativo isolado foi marcado como conflito.'
+
+        [System.IO.File]::WriteAllText($syncConfig, "cloud_sync_enable = `"false`"`ncloud_sync_sync_saves = `"true`"", [System.Text.Encoding]::UTF8)
+        $masterDisabled = Get-CloudCartridgeNativeSaveSyncState -ConfigPaths @($syncConfig) -CloudCartridgeSyncEnabled $true
+        Assert-True (-not $masterDisabled.native_sync_enabled -and -not $masterDisabled.conflict) 'Opcao subordinada criou conflito com o Cloud Sync mestre desativado.'
+        [System.IO.File]::WriteAllText($syncConfig, "cloud_sync_enable = `"true`"`ncloud_sync_sync_saves = `"true`"", [System.Text.Encoding]::UTF8)
 
         $guardRoot = Join-Path $tempRoot 'guarded-sync'
         $localRoot = Join-Path $guardRoot 'local'
@@ -860,7 +878,7 @@ try {
         try {
             $names = @($archive.Entries | ForEach-Object FullName)
             Assert-True ($names -contains 'README.md' -and $names -contains 'MANIFEST-SHA256.txt') 'Pacote sem README ou manifesto.'
-            $forbidden = @($names | Where-Object { $_ -match '(^|/)(config\.json|host-data|backups|dist|client-credentials)' -or $_ -match '\.(log|tmp|bak|zip)$' })
+            $forbidden = @($names | Where-Object { $_ -match '(^|/)(\.tmp|config\.json|host-data|backups|dist|client-credentials)' -or $_ -match '\.(log|tmp|bak|zip)$' })
             Assert-True ($forbidden.Count -eq 0) "Pacote contem dados proibidos: $($forbidden -join ', ')"
         } finally { $archive.Dispose() }
     }
@@ -868,6 +886,12 @@ try {
     Invoke-Test 'Publish script has no force push' {
         $publishText = Get-Content -LiteralPath (Join-Path $repoRoot 'Publicar_no_GitHub.cmd') -Raw
         Assert-True ($publishText -notmatch 'push[^\r\n]*--force') 'Force push ainda presente.'
+    }
+
+    Invoke-Test 'Context menu does not promise unsupported Google Drive eviction' {
+        $contextText = Get-Content -LiteralPath (Join-Path $repoRoot 'setup_context_menu.ps1') -Raw -Encoding UTF8
+        Assert-True ($contextText -notmatch 'attrib\.exe\s+\+u\s+-p') 'Menu ainda executa desidratacao nao comprovada no Google Drive.'
+        Assert-True ($contextText -match 'CloudROM_Free' -and $contextText -match 'Remove-Item') 'Menu legado de liberacao nao e removido.'
     }
 
     Invoke-Test 'Watcher resolves scripts from its own directory' {

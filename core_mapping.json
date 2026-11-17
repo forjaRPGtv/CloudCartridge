@@ -155,10 +155,6 @@
                          "CoreName":  "Atari - 7800 (ProSystem)",
                          "CorePath":  "C:\\RetroArch-Win64\\cores\\prosystem_libretro.dll"
                      },
-    "Nintendo - Wii U":  {
-                             "CoreName":  "DETECT",
-                             "CorePath":  "DETECT"
-                         },
     "Nintendo - Pokemon Mini":  {
                                     "CoreName":  "PokeMini",
                                     "CorePath":  "C:\\RetroArch-Win64\\cores\\pokemini_libretro.dll"

@@ -22,7 +22,7 @@ O instalador não substitui uma pasta já existente por junção. Se houver conf
 - `Ver_Telemetria_e_Downloads.cmd`: mostra cache e transferências.
 - `Monitorar_Host.cmd`: painel contínuo do Host privado.
 
-A retenção padrão é três dias, mas pode ser alterada ou desativada. Um jogo fixado não entra na limpeza automática. Saves, fontes na nuvem e cópias manuais fora do cache gerenciado não podem ser removidos pela limpeza.
+A retenção padrão é três dias, mas pode ser alterada ou desativada. Um jogo fixado não entra na limpeza automática. Saves, fontes na nuvem e cópias manuais fora do cache gerenciado não podem ser removidos pela limpeza. No Google Drive para Desktop em modo streaming, o cache físico é administrado pelo próprio Google Drive; o CloudCartridge só confirma desidratação quando o provedor expõe estado Windows Files On-Demand/CFAPI verificável.
 
 ## Se algo der errado
 

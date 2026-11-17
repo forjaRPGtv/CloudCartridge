@@ -21,7 +21,7 @@ O Host deve permanecer em loopback durante diagnóstico. `-AllowLan` só aceita 
 
 ## Qualidade
 
-Execute `Testar_CloudCartridge.cmd`. A suíte cobre fixtures de cache/download, saves, playlists/catálogo, Host/gateway e MiSTer. Sucesso de fixture não substitui testes de CFAPI, DPAPI interativo, dois PCs ou hardware MiSTer.
+Execute `Testar_CloudCartridge.cmd`. A suíte cobre fixtures de cache/download, saves, playlists/catálogo, Host/gateway e MiSTer. Sucesso de fixture não substitui DPAPI interativo, armazenamento real, dois PCs ou hardware MiSTer. Google Drive streaming no Windows pode usar volume virtual e cache próprio; não interprete `attrib` com saída zero como liberação sem confirmar atributos Files On-Demand/CFAPI.
 
 Para empacotar:
 

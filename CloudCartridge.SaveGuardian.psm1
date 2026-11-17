@@ -149,17 +149,22 @@ function Get-CloudCartridgeNativeSaveSyncState {
         [Parameter(Mandatory = $true)][string[]]$ConfigPaths,
         [bool]$CloudCartridgeSyncEnabled = $true
     )
-    $nativeEnabled = $false
+    $cloudSyncEnabled = $false
+    $syncSavesEnabled = $null
     $evidence = @()
     foreach ($configPath in $ConfigPaths) {
         if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { continue }
         foreach ($line in Get-Content -LiteralPath $configPath -Encoding UTF8) {
-            if ($line -match '^\s*(cloud_sync_enable|cloud_sync_sync_saves)\s*=\s*"?true"?\s*$') {
-                $nativeEnabled = $true
-                $evidence += [PSCustomObject]@{ config_path = [System.IO.Path]::GetFullPath($configPath); setting = $matches[1] }
+            if ($line -match '^\s*(cloud_sync_enable|cloud_sync_sync_saves)\s*=\s*"?(true|false)"?\s*$') {
+                $setting = $matches[1]
+                $enabled = $matches[2] -eq 'true'
+                if ($setting -eq 'cloud_sync_enable') { $cloudSyncEnabled = $enabled }
+                if ($setting -eq 'cloud_sync_sync_saves') { $syncSavesEnabled = $enabled }
+                $evidence += [PSCustomObject]@{ config_path = [System.IO.Path]::GetFullPath($configPath); setting = $setting; enabled = $enabled }
             }
         }
     }
+    $nativeEnabled = $cloudSyncEnabled -and ($null -eq $syncSavesEnabled -or $syncSavesEnabled)
     return [PSCustomObject]@{
         native_sync_enabled = $nativeEnabled
         cloudcartridge_sync_enabled = $CloudCartridgeSyncEnabled

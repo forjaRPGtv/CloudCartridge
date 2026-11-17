@@ -9,7 +9,7 @@ O projeto funciona sem IA. A Agent Skill incluída serve apenas para manutençã
 Implementado e testado com fixtures isolados:
 
 - CLI para diagnóstico, detecção conservadora, cache e fila de downloads com SHA-256;
-- retenção configurável (`3`, `7`, `14`, `30` dias ou desativada), pin e proteção de cópias manuais;
+- retenção configurável (`3`, `7`, `14`, `30` dias ou desativada), pin e proteção de cópias manuais; a desidratação automática só é confirmada quando o provedor expõe estado Windows Files On-Demand/CFAPI;
 - Save Guardian com manifesto de três vias, versões, conflitos, locks e fila offline;
 - playlists incrementais/idempotentes, `.m3u`, catálogo persistente e thumbnails ausentes;
 - Host privado autenticado, cinco vagas, convites de uso único, recuperação e isolamento de saves;
@@ -17,7 +17,7 @@ Implementado e testado com fixtures isolados:
 - adaptador MiSTer isolado com matriz de compatibilidade e verificação por hash;
 - testes automatizados que não usam ROMs, saves ou credenciais pessoais.
 
-Ainda exigem validação no ambiente real: hidratação/desidratação CFAPI do Google Drive, DPAPI no perfil Windows interativo, rede privada entre dois PCs e transferência/save em um MiSTer físico. O suporte a emuladores depende do executável/core realmente detectado; o CloudCartridge não os instala automaticamente.
+Validados no ambiente real: raiz do Google Drive streaming, integridade SHA-256 de leitura, DPAPI no perfil Windows interativo e round-trip versionado de save sintético entre armazenamento local e Drive. O Google Drive para Desktop no Windows usa um volume virtual e gerencia automaticamente seu próprio cache; ele não expôs o estado CFAPI exigido para comprovar `attrib +u -p`, portanto o CloudCartridge não marca mais uma liberação como concluída sem evidência. Ainda exigem hardware externo: rede privada entre dois PCs e transferência/save em um MiSTer físico. O suporte a emuladores depende do executável/core realmente detectado; o CloudCartridge não os instala automaticamente.
 
 ## Requisitos
 
