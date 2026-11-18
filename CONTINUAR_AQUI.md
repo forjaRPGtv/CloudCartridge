@@ -31,6 +31,14 @@ Finalizar e depurar o projeto conforme `CloudCartridge_vNext_PLANO_MESTRE_CODEX.
 - Wii U removido da lista de cores RetroArch incompletos e preservado como Cemu standalone.
 - Menu de contexto atualizado para a telemetria atual; ação legada de `attrib` removida.
 
+## Publicação GitHub de 2026-11-18
+
+- README principal, changelog, contribuição, segurança, templates de issues/PR e metadados públicos organizados.
+- GitHub Pages publicado em `https://forjarpgtv.github.io/CloudCartridge/`, com portal responsivo e links dos manuais validados.
+- CI em runners Windows aprovado com 45/45 testes no PowerShell 7 e 45/45 no Windows PowerShell 5.1.
+- O gate remoto corrigiu portabilidade do `doctor` sem unidade `Z:`, normalização UTC entre versões/culturas do PowerShell e tolerância de inicialização do listener.
+- Relatórios privados de vulnerabilidade ativados; correções técnicas registradas no commit `2eb0ae5`.
+
 ## Limites ainda externos ou do provedor
 
 Não declarar como validados sem ambiente apropriado:
