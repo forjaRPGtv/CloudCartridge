@@ -40,6 +40,8 @@ Não declarar como validados sem ambiente apropriado:
 
 O Google Drive streaming observado é um volume virtual, não um placeholder NTFS/CFAPI. A leitura e a integridade foram validadas, mas a liberação física exata após três dias permanece sob o gerenciador automático de cache do Google Drive para Desktop. `attrib` com código zero sem mudança de estado não é mais aceito como sucesso.
 
+Medição de produção: o Drive para Desktop mantém o cache em `C:\Users\<usuario>\AppData\Local\Google\DriveFS`, com cerca de 8,75 GiB usados na amostra. A pasta `Z:\_GOOGLE_DRIVE_CACHE` foi preparada, mas a troca do diretório precisa ser confirmada na interface do Google Drive: **Preferências > Configurações avançadas > Diretório local dos arquivos em cache**. O controle automatizado da janela não recebeu autorização a tempo e nenhuma preferência do Drive foi alterada.
+
 O Host e o MiSTer estão implementados e cobertos por fixtures, mas esses quatro gates físicos continuam pendentes. Não testar com saves reais sem autorização explícita e backup.
 
 ## Retomada
