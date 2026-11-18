@@ -18,3 +18,9 @@ client-credentials*.json
 Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+
+# GitHub Pages / Jekyll local
+_site/
+.jekyll-cache/
+.jekyll-metadata
+vendor/bundle/

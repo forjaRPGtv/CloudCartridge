@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentação do CloudCartridge
+    url: https://forjarpgtv.github.io/CloudCartridge/
+    about: Consulte instalação, diagnóstico, privacidade e limites conhecidos.

@@ -1,0 +1,47 @@
+name: Relatar um bug
+description: Informe um comportamento reproduzível sem anexar dados pessoais.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Não envie ROMs, BIOS, saves, credenciais, recovery keys ou logs sem sanitização.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema
+      description: O que aconteceu e o que era esperado?
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Comando executado
+      placeholder: CloudCartridge.cmd doctor --json
+  - type: dropdown
+    id: powershell
+    attributes:
+      label: PowerShell
+      options:
+        - Windows PowerShell 5.1
+        - PowerShell 7+
+        - Não sei
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reprodução mínima
+      description: Use caminhos e dados sintéticos.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnóstico sanitizado
+      description: Remova nomes, caminhos pessoais, tokens e chaves antes de colar a saída.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Confirmações
+      options:
+        - label: Confirmei que o relato não contém conteúdo protegido, saves ou segredos.
+          required: true

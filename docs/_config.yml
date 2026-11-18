@@ -1,0 +1,10 @@
+title: CloudCartridge
+description: Automação cloud-first para bibliotecas de emulação no Windows
+theme: jekyll-theme-cayman
+lang: pt-BR
+show_downloads: false
+github:
+  repository_url: https://github.com/forjaRPGtv/CloudCartridge
+  owner_url: https://github.com/forjaRPGtv
+exclude:
+  - adr
