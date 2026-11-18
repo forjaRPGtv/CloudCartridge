@@ -46,7 +46,7 @@ function New-CloudCartridgeHostInvite {
     $database = Read-CloudCartridgeHostDatabase -DatabasePath $DatabasePath
     $activeCount = @($database.profiles | Where-Object { $_.active }).Count
     $pendingCount = @($database.invites | Where-Object {
-        -not $_.used_utc -and [DateTimeOffset]::Parse([string]$_.expires_utc).UtcDateTime -gt [DateTime]::UtcNow
+        -not $_.used_utc -and (ConvertTo-CloudCartridgeUtcDateTime $_.expires_utc) -gt [DateTime]::UtcNow
     }).Count
     if ($activeCount + $pendingCount -ge 5) { throw 'Nao ha vaga disponivel para novo convite.' }
     if (-not $ProfileCode) { $ProfileCode = (New-CloudCartridgeRandomSecret -Bytes 8).ToUpperInvariant() -replace '[^A-Z0-9]', ''; $ProfileCode = $ProfileCode.PadRight(8, 'X').Substring(0, 8) }
@@ -72,7 +72,7 @@ function Use-CloudCartridgeHostInvite {
     $tokenHash = Get-CloudCartridgeSha256Text $InviteToken
     $invite = @($database.invites | Where-Object { $_.token_hash -eq $tokenHash -and -not $_.used_utc } | Select-Object -First 1)
     if ($invite.Count -eq 0) { throw 'Convite invalido, usado ou desconhecido.' }
-    $expiresUtc = [DateTimeOffset]::Parse([string]$invite[0].expires_utc).UtcDateTime
+    $expiresUtc = ConvertTo-CloudCartridgeUtcDateTime $invite[0].expires_utc
     if ($expiresUtc -le [DateTime]::UtcNow) { throw 'Convite expirado.' }
     $profile = New-CloudCartridgeHostProfile -DatabasePath $DatabasePath -DataRoot $DataRoot -DisplayName $invite[0].display_name -ProfileCode $invite[0].profile_code
     $database = Read-CloudCartridgeHostDatabase -DatabasePath $DatabasePath
@@ -196,7 +196,7 @@ function Get-CloudCartridgeHostStatus {
         [PSCustomObject]@{ profile_id = $_.profile_id; profile_code = $_.profile_code; display_name = $_.display_name; active = [bool]$_.active; devices = @($_.devices | Where-Object { $_.active }).Count; created_utc = $_.created_utc; revoked_utc = $_.revoked_utc }
     })
     $active = @($profiles | Where-Object { $_.active }).Count
-    $pending = @($database.invites | Where-Object { -not $_.used_utc -and [DateTimeOffset]::Parse([string]$_.expires_utc).UtcDateTime -gt [DateTime]::UtcNow }).Count
+    $pending = @($database.invites | Where-Object { -not $_.used_utc -and (ConvertTo-CloudCartridgeUtcDateTime $_.expires_utc) -gt [DateTime]::UtcNow }).Count
     return [PSCustomObject]@{ active_guests = $active; capacity = 5; free_slots = 5 - $active; pending_invites = $pending; profiles = $profiles }
 }
 

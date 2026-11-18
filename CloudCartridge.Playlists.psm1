@@ -102,7 +102,11 @@ function Update-CloudCartridgeCatalogIndex {
     foreach ($file in @(Get-ChildItem -LiteralPath $LibraryRoot -Recurse -File | Where-Object { $_.Extension.ToLowerInvariant() -in $Extensions } | Sort-Object FullName)) {
         $old = $previous[$file.FullName]
         $modified = $file.LastWriteTimeUtc.ToString('o')
-        if ($old -and [long]$old.size -eq [long]$file.Length -and [string]$old.modified_utc -eq $modified) {
+        $oldModified = $null
+        if ($old) {
+            try { $oldModified = (ConvertTo-CloudCartridgeUtcDateTime $old.modified_utc).ToString('o') } catch { $oldModified = $null }
+        }
+        if ($old -and [long]$old.size -eq [long]$file.Length -and $oldModified -eq $modified) {
             $items += $old
             $reused++
         } else {

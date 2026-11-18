@@ -1,5 +1,22 @@
 Set-StrictMode -Version Latest
 
+function ConvertTo-CloudCartridgeUtcDateTime {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$Value)
+
+    if ($Value -is [DateTimeOffset]) { return ([DateTimeOffset]$Value).UtcDateTime }
+    if ($Value -is [DateTime]) { return ([DateTime]$Value).ToUniversalTime() }
+    try {
+        return [DateTimeOffset]::Parse(
+            [string]$Value,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal
+        ).UtcDateTime
+    } catch {
+        throw "Data UTC invalida: $Value"
+    }
+}
+
 function Get-CloudCartridgeConfig {
     [CmdletBinding()]
     param([string]$ConfigPath = (Join-Path $PSScriptRoot 'config.json'))
@@ -574,6 +591,7 @@ function Enter-CloudCartridgeDownloadJob {
 }
 
 Export-ModuleMember -Function @(
+    'ConvertTo-CloudCartridgeUtcDateTime',
     'Get-CloudCartridgeConfig',
     'Update-CloudCartridgeConfig',
     'Find-CloudCartridgeExecutable',

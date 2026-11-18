@@ -776,7 +776,7 @@ try {
         try {
             $health = $null
             for ($attempt = 0; $attempt -lt 40 -and $null -eq $health; $attempt++) {
-                try { $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -UseBasicParsing -TimeoutSec 1 } catch { Start-Sleep -Milliseconds 100 }
+                try { $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -UseBasicParsing -TimeoutSec 10 } catch { Start-Sleep -Milliseconds 100 }
             }
             $null = Wait-Job -Job $serverJob -Timeout 10
             $serverOutput = Receive-Job -Job $serverJob 2>&1
@@ -957,14 +957,39 @@ try {
     }
 
     Invoke-Test 'CLI doctor emits versioned JSON' {
+        $doctorRoot = Join-Path $tempRoot 'doctor-missing-drive'
+        New-Item -ItemType Directory -Path $doctorRoot -Force | Out-Null
+        $doctorFiles = @(
+            'CloudCartridge.ps1',
+            'CloudCartridge.Core.psm1',
+            'CloudCartridge.SaveGuardian.psm1',
+            'CloudCartridge.Playlists.psm1',
+            'CloudCartridge.Host.psm1',
+            'CloudCartridge.Mister.psm1',
+            'core_mapping.json',
+            'standalone_emulators.template.json'
+        )
+        foreach ($doctorFile in $doctorFiles) {
+            Copy-Item -LiteralPath (Join-Path $repoRoot $doctorFile) -Destination $doctorRoot
+        }
+        $missingDriveLetter = @('Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y') | Where-Object { -not (Test-Path -LiteralPath ("${_}:\")) } | Select-Object -First 1
+        Assert-True (-not [string]::IsNullOrWhiteSpace($missingDriveLetter)) 'Nao foi encontrada uma letra de unidade ausente para o teste do doctor.'
+        $missingDriveRoot = "${missingDriveLetter}:\CloudCartridge-Missing-Drive"
+        $doctorConfig = Get-Content -LiteralPath (Join-Path $repoRoot 'config.template.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $doctorConfig.local_roms_path = $missingDriveRoot
+        $doctorConfig.google_drive_roms_path = $missingDriveRoot
+        $doctorConfig.retroarch_path = [System.IO.Path]::Combine($missingDriveRoot, 'retroarch.exe')
+        [System.IO.File]::WriteAllText((Join-Path $doctorRoot 'config.json'), ($doctorConfig | ConvertTo-Json -Depth 8), [System.Text.Encoding]::UTF8)
+
         $previousPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        $doctorOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'CloudCartridge.ps1') doctor --json 2>&1
+        $doctorOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $doctorRoot 'CloudCartridge.ps1') doctor --json 2>&1
         $doctorExitCode = $LASTEXITCODE
         $ErrorActionPreference = $previousPreference
         Assert-True ($doctorExitCode -eq 0) "Doctor falhou: $($doctorOutput -join ' ')"
         $doctor = ($doctorOutput -join "`n") | ConvertFrom-Json
         Assert-True ($doctor.schema_version -eq 1) 'Schema JSON do doctor incorreto.'
+        Assert-True (-not $doctor.library.exists -and $doctor.issues -contains 'library_root_missing') 'Doctor nao reportou unidade ausente de forma controlada.'
         Assert-True ($doctor.retroarch.state -in @('detected', 'not_installed')) 'Estado do RetroArch invalido.'
     }
 } finally {

@@ -20,7 +20,7 @@ $configPath = Join-Path $scriptDir 'config.json'
 $config = Get-CloudCartridgeConfig -ConfigPath $configPath
 
 function Get-CacheSummary {
-    $registryPath = Join-Path $config.local_roms_path '.cache_registry.json'
+    $registryPath = [System.IO.Path]::Combine([string]$config.local_roms_path, '.cache_registry.json')
     $summary = [ordered]@{
         registry_path = $registryPath
         registry_exists = Test-Path -LiteralPath $registryPath -PathType Leaf
@@ -46,7 +46,7 @@ function Get-CacheSummary {
 }
 
 function Get-DownloadSummary {
-    $journalPath = Join-Path $config.local_roms_path '.download_jobs.json'
+    $journalPath = [System.IO.Path]::Combine([string]$config.local_roms_path, '.download_jobs.json')
     $jobs = @(Get-CloudCartridgeDownloadJobs -JournalPath $journalPath)
     return [PSCustomObject][ordered]@{
         journal_path = $journalPath
@@ -246,18 +246,18 @@ switch ($Command.ToLowerInvariant()) {
             }
             'pin' {
                 if ($filteredArguments.Count -lt 2) { throw 'Use: cloudcartridge cache pin <caminho-ou-catalog_id> [--dry-run|--yes]' }
-                $registryPath = Join-Path $config.local_roms_path '.cache_registry.json'
+                $registryPath = [System.IO.Path]::Combine([string]$config.local_roms_path, '.cache_registry.json')
                 $result = Set-CloudCartridgeCachePin -RegistryPath $registryPath -ManagedRoot $config.local_roms_path -Identifier $filteredArguments[1] -Pinned $true -DryRun:(-not $confirmed)
                 Write-Result $result
             }
             'unpin' {
                 if ($filteredArguments.Count -lt 2) { throw 'Use: cloudcartridge cache unpin <caminho-ou-catalog_id> [--dry-run|--yes]' }
-                $registryPath = Join-Path $config.local_roms_path '.cache_registry.json'
+                $registryPath = [System.IO.Path]::Combine([string]$config.local_roms_path, '.cache_registry.json')
                 $result = Set-CloudCartridgeCachePin -RegistryPath $registryPath -ManagedRoot $config.local_roms_path -Identifier $filteredArguments[1] -Pinned $false -DryRun:(-not $confirmed)
                 Write-Result $result
             }
             'cleanup' {
-                $registryPath = Join-Path $config.local_roms_path '.cache_registry.json'
+                $registryPath = [System.IO.Path]::Combine([string]$config.local_roms_path, '.cache_registry.json')
                 $previewOnly = -not $confirmed
                 $results = @(Invoke-CloudCartridgeCacheCleanup `
                     -RegistryPath $registryPath `

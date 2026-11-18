@@ -33,7 +33,7 @@ function Test-CloudCartridgeApiRateLimit {
     $now = [DateTime]::UtcNow
     $state = if (Test-Path -LiteralPath $StatePath -PathType Leaf) { Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json } else { [PSCustomObject]@{ requests = @() } }
     $cutoff = $now.AddSeconds(-$WindowSeconds)
-    $requests = @($state.requests | Where-Object { ([DateTimeOffset]::Parse([string]$_.timestamp_utc).UtcDateTime) -gt $cutoff })
+    $requests = @($state.requests | Where-Object { (ConvertTo-CloudCartridgeUtcDateTime $_.timestamp_utc) -gt $cutoff })
     $clientRequests = @($requests | Where-Object { $_.client -eq $ClientAddress })
     if ($clientRequests.Count -ge $Limit) { return $false }
     $requests += [PSCustomObject]@{ client = $ClientAddress; timestamp_utc = $now.ToString('o') }
@@ -49,7 +49,7 @@ function Test-CloudCartridgeApiNonce {
     if ($Nonce -notmatch '^[A-Za-z0-9_-]{16,128}$') { return [PSCustomObject]@{ valid = $false; code = 'invalid_nonce' } }
     $state = if (Test-Path -LiteralPath $StatePath -PathType Leaf) { Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json } else { [PSCustomObject]@{ nonces = @() } }
     $cutoff = [DateTime]::UtcNow.AddMinutes(-10)
-    $nonces = @($state.nonces | Where-Object { ([DateTimeOffset]::Parse([string]$_.seen_utc).UtcDateTime) -gt $cutoff })
+    $nonces = @($state.nonces | Where-Object { (ConvertTo-CloudCartridgeUtcDateTime $_.seen_utc) -gt $cutoff })
     if (@($nonces | Where-Object { $_.profile_id -eq $ProfileId -and $_.nonce -eq $Nonce }).Count -gt 0) { return [PSCustomObject]@{ valid = $false; code = 'replay_detected' } }
     $nonces += [PSCustomObject]@{ profile_id = $ProfileId; nonce = $Nonce; seen_utc = [DateTime]::UtcNow.ToString('o') }
     $state.nonces = $nonces

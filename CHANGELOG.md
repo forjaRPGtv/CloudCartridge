@@ -4,7 +4,11 @@ As mudanças relevantes do CloudCartridge são registradas neste arquivo. O proj
 
 ## Não publicado
 
-- Nenhuma mudança funcional pendente.
+### Corrigido
+
+- Diagnóstico em máquinas sem a unidade `Z:` agora informa a raiz ausente sem encerrar com erro.
+- Datas persistidas em JSON são normalizadas em UTC entre Windows PowerShell 5.1 e PowerShell 7, independentemente da cultura do sistema.
+- Teste do listener tolera a inicialização mais lenta de runners limpos sem reduzir a validação do endpoint.
 
 ## Marco de produção local — 2026-11-18
 
