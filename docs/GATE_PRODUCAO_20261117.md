@@ -23,7 +23,7 @@ O volume `G:` observado é virtual e o arquivo testado não apresentou atributos
 
 O Google Drive para Desktop administra automaticamente o cache de arquivos em streaming. Uma retenção física exata de três dias não pode ser afirmada por esta integração enquanto o Google não fornecer uma interface suportada de expulsão de cache no Windows.
 
-Na máquina de produção, o log do Drive para Desktop informou aproximadamente 8.958 MiB usados no cache sob o perfil do usuário no SSD `C:` e capacidade dinâmica de aproximadamente 105.938 MiB. A pasta `Z:\_GOOGLE_DRIVE_CACHE` foi criada com mais de 1,3 TiB livre para receber o cache. Falta confirmar a mudança na interface oficial: **Preferências > Configurações avançadas > Diretório local dos arquivos em cache**. A tentativa de abrir essa janela por automação expirou sem alterar a configuração.
+Na máquina de produção, o log do Drive para Desktop informou aproximadamente 8.958 MiB usados no cache sob o perfil do usuário no SSD `C:` e capacidade dinâmica de aproximadamente 105.938 MiB. Em 2026-11-18, o diretório oficial foi alterado pela interface do Google Drive para `Z:\_GOOGLE_DRIVE_CACHE`. O Drive reiniciou, migrou cerca de 9,5 GiB para o novo local e remontou a unidade virtual `G:`. O `doctor --json` continuou em `status: ok` depois da migração.
 
 Referências oficiais:
 
